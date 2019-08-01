@@ -36,7 +36,7 @@ QList<TransactionRecord> TransactionRecord::decomposeTransaction(const CWallet *
         //
         // Credit
         //
-        BOOST_FOREACH(const CTxOut& txout, wtx.vout)
+        for (const CTxOut& txout : wtx.vout)
         {
             if(wallet->IsMine(txout))
             {
@@ -80,20 +80,25 @@ QList<TransactionRecord> TransactionRecord::decomposeTransaction(const CWallet *
     else
     {
         bool fAllFromMe = true;
-        BOOST_FOREACH(const CTxIn& txin, wtx.vin)
+        for (const CTxIn& txin : wtx.vin)
             fAllFromMe = fAllFromMe && wallet->IsMine(txin);
 
         bool fAllToMe = true;
-        BOOST_FOREACH(const CTxOut& txout, wtx.vout)
+        for (const CTxOut& txout : wtx.vout)
             fAllToMe = fAllToMe && wallet->IsMine(txout);
 
         if (fAllFromMe && fAllToMe)
         {
             // Payment to self
-            int64_t nChange = wtx.GetChange();
-
-            parts.append(TransactionRecord(hash, nTime, TransactionRecord::SendToSelf, "",
-                            -(nDebit - nChange), nCredit - nChange));
+            int64_t nChange = wtx.GetChange();	
+			TransactionRecord sub(hash, nTime);
+			sub.type = TransactionRecord::SendToSelf;
+			sub.credit = nCredit - nChange;
+			sub.debit =  -(nDebit - nChange);		
+			CTxDestination address;
+			if (ExtractDestination(wtx.vout[0].scriptPubKey, address))
+				 sub.address = CBitcoinAddress(address).ToString();
+			parts.append(sub);
         }
         else if (fAllFromMe)
         {

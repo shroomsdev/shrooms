@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/replace.hpp>
-#include <boost/foreach.hpp>
 #include <map>
 
 #include "alert.h"
@@ -19,12 +18,13 @@ using namespace std;
 map<uint256, CAlert> mapAlerts;
 CCriticalSection cs_mapAlerts;
 
-static const char* pszMainKey = "044fadb490674a0ed9c95d2ca06fd198d2c71f6b6f37f1b55acfc469780a3a9bab1bb8fd39dbad6a10573c1d3d3a2fb9e120f701f2a19da929cd0e22838217fe8f";
+static const char* pszMainKey = "0407caebc8e2e1cabdc2cbe7c017f757036014c4c86381273e70d7599f3ff0b63bb2d4e82a0cdb4999126d9b95ae89d46d13598b956001f65a0d2c8555b998bb39";
 
 // TestNet alerts pubKey
-static const char* pszTestKey = "044fadb490674a0ed9c95d2ca06fd198d2c71f6b6f37f1b55acfc469780a3a9bab1bb8fd39dbad6a10573c1d3d3a2fb9e120f701f2a19da929cd0e22838217fe8f";
+static const char* pszTestKey = "045df7325180dc5ac68bfc6fa794f5f93e6d77b1cdd1c3d0b41b711c8b621b839f4c83dcc9ac5702fc76cb6bb9aa98bf643f1f35f6daa3d755a6ac0c28945643fa";
 
-
+// TestNet alerts private key
+// "308201130201010420f03ace306e47076aaf238be1d19678106b5f01316c5596a260bf4b28211b34e7a081a53081a2020101302c06072a8648ce3d0101022100fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f300604010004010704410479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8022100fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141020101a144034200045df7325180dc5ac68bfc6fa794f5f93e6d77b1cdd1c3d0b41b711c8b621b839f4c83dcc9ac5702fc76cb6bb9aa98bf643f1f35f6daa3d755a6ac0c28945643fa"
 
 void CUnsignedAlert::SetNull()
 {
@@ -47,16 +47,16 @@ void CUnsignedAlert::SetNull()
 std::string CUnsignedAlert::ToString() const
 {
     std::string strSetCancel;
-    BOOST_FOREACH(int n, setCancel)
+    for (int n : setCancel)
         strSetCancel += strprintf("%d ", n);
     std::string strSetSubVer;
-    BOOST_FOREACH(std::string str, setSubVer)
+    for (std::string str : setSubVer)
         strSetSubVer += "\"" + str + "\" ";
     return strprintf(
         "CAlert(\n"
         "    nVersion     = %d\n"
-        "    nRelayUntil  = %"PRId64"\n"
-        "    nExpiration  = %"PRId64"\n"
+        "    nRelayUntil  = %" PRId64 "\n"
+        "    nExpiration  = %" PRId64 "\n"
         "    nID          = %d\n"
         "    nCancel      = %d\n"
         "    setCancel    = %s\n"
@@ -224,7 +224,7 @@ bool CAlert::ProcessAlert(bool fThread)
         }
 
         // Check if this alert has been cancelled
-        BOOST_FOREACH(PAIRTYPE(const uint256, CAlert)& item, mapAlerts)
+        for (PAIRTYPE(const uint256, CAlert)& item : mapAlerts)
         {
             const CAlert& alert = item.second;
             if (alert.Cancels(*this))

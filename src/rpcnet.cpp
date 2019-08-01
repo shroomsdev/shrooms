@@ -8,6 +8,7 @@
 #include "wallet.h"
 #include "db.h"
 #include "walletdb.h"
+#include "ntp.h"
 
 using namespace json_spirit;
 using namespace std;
@@ -29,7 +30,7 @@ static void CopyNodeStats(std::vector<CNodeStats>& vstats)
 
     LOCK(cs_vNodes);
     vstats.reserve(vNodes.size());
-    BOOST_FOREACH(CNode* pnode, vNodes) {
+    for (CNode* pnode : vNodes) {
         CNodeStats stats;
         pnode->copyStats(stats);
         vstats.push_back(stats);
@@ -48,11 +49,11 @@ Value getpeerinfo(const Array& params, bool fHelp)
 
     Array ret;
 
-    BOOST_FOREACH(const CNodeStats& stats, vstats) {
+    for (const CNodeStats& stats : vstats) {
         Object obj;
 
         obj.push_back(Pair("addr", stats.addrName));
-        obj.push_back(Pair("services", strprintf("%08"PRIx64, stats.nServices)));
+        obj.push_back(Pair("services", strprintf("%08" PRIx64, stats.nServices)));
         obj.push_back(Pair("lastsend", (int64_t)stats.nLastSend));
         obj.push_back(Pair("lastrecv", (int64_t)stats.nLastRecv));
         obj.push_back(Pair("conntime", (int64_t)stats.nTimeConnected));
@@ -115,7 +116,7 @@ Value sendalert(const Array& params, bool fHelp)
     // Relay alert
     {
         LOCK(cs_vNodes);
-        BOOST_FOREACH(CNode* pnode, vNodes)
+        for (CNode* pnode : vNodes)
             alert.RelayTo(pnode);
     }
 
@@ -129,4 +130,42 @@ Value sendalert(const Array& params, bool fHelp)
     if (alert.nCancel > 0)
         result.push_back(Pair("nCancel", alert.nCancel));
     return result;
+}
+
+Value ntptime(const Array& params, bool fHelp)
+{
+    if (fHelp || params.size() > 1)
+        throw runtime_error(
+            "ntptime [ntpserver]\n"
+            "Returns current time from specific or random NTP server.");
+
+    int64_t nTime;
+    if (params.size() > 0) {
+        string strHostName = params[0].get_str();
+        nTime = NtpGetTime(strHostName);
+    }
+    else {
+        CNetAddr ip;
+        nTime = NtpGetTime(ip);
+    }
+
+    Object obj;
+    switch (nTime) {
+    case -1:
+        throw runtime_error("Socket initialization error");
+    case -2:
+        throw runtime_error("Switching socket mode to non-blocking failed");
+    case -3:
+        throw runtime_error("Unable to send data");
+    case -4:
+        throw runtime_error("Receive timed out");
+    default:
+        if (nTime > 0 && nTime != 2085978496) {
+            obj.push_back(Pair("epoch", nTime));
+            obj.push_back(Pair("time", DateTimeStrFormat(nTime)));
+        }
+        else throw runtime_error("Unexpected response");
+    }
+
+    return obj;
 }

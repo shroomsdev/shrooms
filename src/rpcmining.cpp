@@ -34,28 +34,30 @@ Value getmininginfo(const Array& params, bool fHelp)
     pwalletMain->GetStakeWeight(*pwalletMain, nMinWeight, nMaxWeight, nWeight);
 
     Object obj, diff, weight;
-    obj.push_back(Pair("Blocks",        (int)nBestHeight));
-    obj.push_back(Pair("Current Block Size",(uint64_t)nLastBlockSize));
-    obj.push_back(Pair("Current Block Tx",(uint64_t)nLastBlockTx));
+    obj.push_back(Pair("blocks",        (int)nBestHeight));
+    obj.push_back(Pair("currentblocksize",(uint64_t)nLastBlockSize));
+    obj.push_back(Pair("currentblocktx",(uint64_t)nLastBlockTx));
 
-    diff.push_back(Pair("Proof of Work",        GetDifficulty()));
-    diff.push_back(Pair("Proof of Stake",       GetDifficulty(GetLastBlockIndex(pindexBest, true))));
-    diff.push_back(Pair("Search Interval",      (int)nLastCoinStakeSearchInterval));
-    obj.push_back(Pair("Difficulty",    diff));
+    diff.push_back(Pair("proof-of-work",        GetDifficulty()));
+    diff.push_back(Pair("proof-of-stake",       GetDifficulty(GetLastBlockIndex(pindexBest, true))));
+    diff.push_back(Pair("search-interval",      (int)nLastCoinStakeSearchInterval));
+    obj.push_back(Pair("difficulty",    diff));
 
-    obj.push_back(Pair("Block Value",    (uint64_t)GetProofOfWorkReward(0)));
-    obj.push_back(Pair("Net MH/s",     GetPoWMHashPS()));
-    obj.push_back(Pair("Net Stake Weight", GetPoSKernelPS()));
-    obj.push_back(Pair("Errors",        GetWarnings("statusbar")));
-    obj.push_back(Pair("Pooled Tx",      (uint64_t)mempool.size()));
+    obj.push_back(Pair("blockvalue",    (uint64_t)GetProofOfWorkReward(0) / 100000000));
+    obj.push_back(Pair("netmhashps",     GetPoWMHashPS()));
+    obj.push_back(Pair("netstakeweight", GetPoSKernelPS()));
+    obj.push_back(Pair("errors",        GetWarnings("statusbar")));
+    obj.push_back(Pair("pooledtx",      (uint64_t)mempool.size()));
 
-    weight.push_back(Pair("Minimum",    (uint64_t)nMinWeight));
-    weight.push_back(Pair("Maximum",    (uint64_t)nMaxWeight));
-    weight.push_back(Pair("Combined",  (uint64_t)nWeight));
-    obj.push_back(Pair("Stake Weight", weight));
+    weight.push_back(Pair("minimum",    (uint64_t)nMinWeight));
+    weight.push_back(Pair("maximum",    (uint64_t)nMaxWeight));
+    weight.push_back(Pair("combined",  (uint64_t)nWeight));
+    obj.push_back(Pair("stakeweight", weight));
 
-    obj.push_back(Pair("Stake Interest",    (uint64_t)COIN_YEAR_REWARD));
-    obj.push_back(Pair("Testnet",       fTestNet));
+    obj.push_back(Pair("stakeinterest",    (uint64_t)COIN_YEAR_REWARD / 1000000));
+    obj.push_back(Pair("stakecaplimit", (double)GetProofOfStakeReward(0, 0, GetTime(), true) / 100000000));
+    obj.push_back(Pair("splitthreshold",   ValueFromAmount(nSplitThreshold)));
+    obj.push_back(Pair("testnet",       fTestNet));
     return obj;
 }
 
@@ -71,25 +73,34 @@ Value getstakinginfo(const Array& params, bool fHelp)
 
     uint64_t nNetworkWeight = GetPoSKernelPS();
     bool staking = nLastCoinStakeSearchInterval && nWeight;
-    int nExpectedTime = staking ? (nTargetSpacing * nNetworkWeight / nWeight) : -1;
+
+    int nExpectedTime = 0;
+    if(GetAdjustedTime() > FORK_TIME)
+        nExpectedTime = staking ? (nTargetSpacing2 * nNetworkWeight / nWeight) : -1;
+    else
+        nExpectedTime = staking ? (nTargetSpacing * nNetworkWeight / nWeight) : -1;
 
     Object obj;
 
-    obj.push_back(Pair("Enabled", GetBoolArg("-staking", true)));
-    obj.push_back(Pair("Staking", staking));
-    obj.push_back(Pair("Errors", GetWarnings("statusbar")));
+    obj.push_back(Pair("enabled", GetBoolArg("-staking", true)));
+    obj.push_back(Pair("staking", staking));
+    obj.push_back(Pair("errors", GetWarnings("statusbar")));
+	
+    obj.push_back(Pair("stakeinterest",    (uint64_t)COIN_YEAR_REWARD / 1000000));
+    obj.push_back(Pair("stakecaplimit", (double)GetProofOfStakeReward(0, 0, GetTime(), true) / 100000000));
+    obj.push_back(Pair("splitthreshold",   ValueFromAmount(nSplitThreshold)));
 
-    obj.push_back(Pair("Current Block Size", (uint64_t)nLastBlockSize));
-    obj.push_back(Pair("Current Block Tx", (uint64_t)nLastBlockTx));
-    obj.push_back(Pair("Pooled Tx", (uint64_t)mempool.size()));
+    obj.push_back(Pair("currentblocksize", (uint64_t)nLastBlockSize));
+    obj.push_back(Pair("currentblocktx", (uint64_t)nLastBlockTx));
+    obj.push_back(Pair("pooledtx", (uint64_t)mempool.size()));
 
-    obj.push_back(Pair("Difficulty", GetDifficulty(GetLastBlockIndex(pindexBest, true))));
-    obj.push_back(Pair("Search Interval", (int)nLastCoinStakeSearchInterval));
+    obj.push_back(Pair("difficulty", GetDifficulty(GetLastBlockIndex(pindexBest, true))));
+    obj.push_back(Pair("searchinterval", (int)nLastCoinStakeSearchInterval));
 
-    obj.push_back(Pair("Weight", (uint64_t)nWeight));
-    obj.push_back(Pair("Net Stake Weight", (uint64_t)nNetworkWeight));
+    obj.push_back(Pair("weight", (uint64_t)nWeight));
+    obj.push_back(Pair("netstakeweight", (uint64_t)nNetworkWeight));
 
-    obj.push_back(Pair("Expected Time", nExpectedTime));
+    obj.push_back(Pair("expectedtime", nExpectedTime));
 
     return obj;
 }
@@ -130,7 +141,7 @@ Value getworkex(const Array& params, bool fHelp)
             {
                 // Deallocate old blocks since they're obsolete now
                 mapNewBlock.clear();
-                BOOST_FOREACH(CBlock* pblock, vNewBlock)
+                for (CBlock* pblock : vNewBlock)
                     delete pblock;
                 vNewBlock.clear();
             }
@@ -177,7 +188,7 @@ Value getworkex(const Array& params, bool fHelp)
 
         Array merkle_arr;
 
-        BOOST_FOREACH(uint256 merkleh, merkle) {
+        for (uint256 merkleh : merkle) {
             merkle_arr.push_back(HexStr(BEGIN(merkleh), END(merkleh)));
         }
 
@@ -264,7 +275,7 @@ Value getwork(const Array& params, bool fHelp)
             {
                 // Deallocate old blocks since they're obsolete now
                 mapNewBlock.clear();
-                BOOST_FOREACH(CBlock* pblock, vNewBlock)
+                for (CBlock* pblock : vNewBlock)
                     delete pblock;
                 vNewBlock.clear();
             }
@@ -429,7 +440,7 @@ Value getblocktemplate(const Array& params, bool fHelp)
     map<uint256, int64_t> setTxIndex;
     int i = 0;
     CTxDB txdb("r");
-    BOOST_FOREACH (CTransaction& tx, pblock->vtx)
+    for (CTransaction& tx : pblock->vtx)
     {
         uint256 txHash = tx.GetHash();
         setTxIndex[txHash] = i++;
@@ -453,7 +464,7 @@ Value getblocktemplate(const Array& params, bool fHelp)
             entry.push_back(Pair("fee", (int64_t)(tx.GetValueIn(mapInputs) - tx.GetValueOut())));
 
             Array deps;
-            BOOST_FOREACH (MapPrevTx::value_type& inp, mapInputs)
+            for (MapPrevTx::value_type& inp : mapInputs)
             {
                 if (setTxIndex.count(inp.first))
                     deps.push_back(setTxIndex[inp.first]);
