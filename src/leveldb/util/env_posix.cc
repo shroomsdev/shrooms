@@ -307,7 +307,6 @@ public:
 
     virtual Status Sync() {
         Status s;
-        int ret;
 
         /* Manifest must be present */
         s = SyncDirIfManifest();
@@ -550,10 +549,7 @@ class PosixEnv : public Env {
   }
 
   static uint64_t gettid() {
-    pthread_t tid = pthread_self();
-    uint64_t thread_id = 0;
-    memcpy(&thread_id, &tid, std::min(sizeof(thread_id), sizeof(tid)));
-    return thread_id;
+    return((uint64_t)pthread_self());
   }
 
   virtual Status NewLogger(const std::string& fname, Logger** result) {

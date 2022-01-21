@@ -7,11 +7,11 @@
 # to switch between compilation modes.
 
 # (A) Production use (optimized mode)
-OPT ?= -O2 -DNDEBUG
+OPT ?= -O2 -DNDEBUG -Wall -Wextra -Wformat -Wformat-security -Wno-unused-parameter
 # (B) Debug mode, w/ full line-level debugging symbols
-# OPT ?= -g2
+# OPT ?= -g2 -Wall -Wextra -Wformat -Wformat-security -Wno-unused-parameter
 # (C) Profiling mode: opt, but w/debugging symbols
-# OPT ?= -O2 -g2 -DNDEBUG
+# OPT ?= -O2 -g2 -DNDEBUG -Wall -Wextra -Wformat -Wformat-security -Wno-unused-parameter
 #-----------------------------------------------
 
 # detect what platform we're building on

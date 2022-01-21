@@ -115,6 +115,8 @@ Status ReadBlock(RandomAccessFile* file,
 
       // Ok
       break;
+
+#ifdef SNAPPY
     case kSnappyCompression: {
       size_t ulength = 0;
       if (!port::Snappy_GetUncompressedLength(data, n, &ulength)) {
@@ -133,6 +135,8 @@ Status ReadBlock(RandomAccessFile* file,
       result->cachable = true;
       break;
     }
+#endif
+
     default:
       delete[] buf;
       return Status::Corruption("bad block type");

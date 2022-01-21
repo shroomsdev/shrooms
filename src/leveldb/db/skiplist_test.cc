@@ -187,15 +187,16 @@ class ConcurrentTest {
   // Per-key generation
   struct State {
     port::AtomicPointer generation[K];
-    void Set(int k, intptr_t v) {
+    void Set(uint32_t k, intptr_t v) {
       generation[k].Release_Store(reinterpret_cast<void*>(v));
     }
-    intptr_t Get(int k) {
+    intptr_t Get(uint32_t k) {
       return reinterpret_cast<intptr_t>(generation[k].Acquire_Load());
     }
 
     State() {
-      for (int k = 0; k < K; k++) {
+      uint32_t k;
+      for(k = 0; k < K; k++) {
         Set(k, 0);
       }
     }
@@ -225,7 +226,8 @@ class ConcurrentTest {
   void ReadStep(Random* rnd) {
     // Remember the initial committed state of the skiplist.
     State initial_state;
-    for (int k = 0; k < K; k++) {
+    uint32_t k;
+    for(k = 0; k < K; k++) {
       initial_state.Set(k, current_.Get(k));
     }
 

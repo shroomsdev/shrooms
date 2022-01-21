@@ -828,9 +828,13 @@ TEST(TableTest, ApproximateOffsetOfPlain) {
 }
 
 static bool SnappyCompressionSupported() {
+#ifdef SNAPPY
   std::string out;
   Slice in = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   return port::Snappy_Compress(in.data(), in.size(), &out);
+#else
+  return(false);
+#endif
 }
 
 TEST(TableTest, ApproximateOffsetOfCompressed) {

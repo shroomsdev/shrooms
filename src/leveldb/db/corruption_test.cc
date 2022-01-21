@@ -86,7 +86,7 @@ class CorruptionTest {
   }
 
   void Check(int min_expected, int max_expected) {
-    int next_expected = 0;
+    uint64_t next_expected = 0;
     int missed = 0;
     int bad_keys = 0;
     int bad_values = 0;

@@ -91,40 +91,32 @@ typedef pthread_once_t OnceType;
 #define LEVELDB_ONCE_INIT PTHREAD_ONCE_INIT
 extern void InitOnce(OnceType* once, void (*initializer)());
 
+#ifdef SNAPPY
 inline bool Snappy_Compress(const char* input, size_t length,
                             ::std::string* output) {
-#ifdef SNAPPY
   output->resize(snappy::MaxCompressedLength(length));
   size_t outlen;
   snappy::RawCompress(input, length, &(*output)[0], &outlen);
   output->resize(outlen);
   return true;
-#endif
-
-  return false;
 }
 
 inline bool Snappy_GetUncompressedLength(const char* input, size_t length,
                                          size_t* result) {
-#ifdef SNAPPY
   return snappy::GetUncompressedLength(input, length, result);
-#else
-  return false;
-#endif
 }
 
 inline bool Snappy_Uncompress(const char* input, size_t length,
                               char* output) {
-#ifdef SNAPPY
   return snappy::RawUncompress(input, length, output);
-#else
-  return false;
-#endif
 }
+#endif
 
+#ifdef HEAP_PROFILE
 inline bool GetHeapProfile(void (*func)(void*, const char*, int), void* arg) {
   return false;
 }
+#endif
 
 } // namespace port
 } // namespace leveldb

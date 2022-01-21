@@ -1036,7 +1036,7 @@ bool VersionSet::ReuseManifest(const std::string& dscname,
       manifest_type != kDescriptorFile ||
       !env_->GetFileSize(dscname, &manifest_size).ok() ||
       // Make new compacted MANIFEST if old one is too big
-      manifest_size >= TargetFileSize(options_)) {
+      (manifest_size >= (uint64_t)TargetFileSize(options_))) {
     return false;
   }
 

@@ -262,9 +262,12 @@ void DBImpl::DeleteObsoleteFiles() {
         if (type == kTableFile) {
           table_cache_->Evict(number);
         }
-        Log(options_.info_log, "Delete type=%d #%lld\n",
-            int(type),
-            static_cast<unsigned long long>(number));
+#ifdef WINDOWS
+        Log(options_.info_log, "Delete type=%d #%I64u\n",
+#else
+        Log(options_.info_log, "Delete type=%d #%llu\n",
+#endif
+          (int)type, (unsigned long long)number);
         env_->DeleteFile(dbname_ + "/" + filenames[i]);
       }
     }
@@ -401,8 +404,12 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
   // large sequence numbers).
   log::Reader reader(file, &reporter, true/*checksum*/,
                      0/*initial_offset*/);
+#ifdef WINDOWS
+  Log(options_.info_log, "Recovering log #%I64u",
+#else
   Log(options_.info_log, "Recovering log #%llu",
-      (unsigned long long) log_number);
+#endif
+    (unsigned long long)log_number);
 
   // Read all the records and add to a memtable
   std::string scratch;
@@ -493,8 +500,12 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
   meta.number = versions_->NewFileNumber();
   pending_outputs_.insert(meta.number);
   Iterator* iter = mem->NewIterator();
+#ifdef WINDOWS
+  Log(options_.info_log, "Level-0 table #%I64u: started",
+#else
   Log(options_.info_log, "Level-0 table #%llu: started",
-      (unsigned long long) meta.number);
+#endif
+    (unsigned long long)meta.number);
 
   Status s;
   {
@@ -503,10 +514,15 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
     mutex_.Lock();
   }
 
-  Log(options_.info_log, "Level-0 table #%llu: %lld bytes %s",
-      (unsigned long long) meta.number,
-      (unsigned long long) meta.file_size,
-      s.ToString().c_str());
+#ifdef WINDOWS
+  Log(options_.info_log, "Level-0 table #%I64u: %I64u bytes %s",
+#else
+  Log(options_.info_log, "Level-0 table #%llu: %llu bytes %s",
+#endif
+    (unsigned long long)meta.number,
+    (unsigned long long)meta.file_size,
+    s.ToString().c_str());
+
   delete iter;
   pending_outputs_.erase(meta.number);
 
@@ -726,12 +742,14 @@ void DBImpl::BackgroundCompaction() {
       RecordBackgroundError(status);
     }
     VersionSet::LevelSummaryStorage tmp;
-    Log(options_.info_log, "Moved #%lld to level-%d %lld bytes %s: %s\n",
-        static_cast<unsigned long long>(f->number),
-        c->level() + 1,
-        static_cast<unsigned long long>(f->file_size),
-        status.ToString().c_str(),
-        versions_->LevelSummary(&tmp));
+#ifdef WINDOWS
+    Log(options_.info_log, "Moved #%I64u to level-%d %I64u bytes %s: %s\n",
+#else
+    Log(options_.info_log, "Moved #%llu to level-%d %llu bytes %s: %s\n",
+#endif
+      (unsigned long long)f->number, (int)(c->level() + 1),
+      (unsigned long long)f->file_size,
+      status.ToString().c_str(), versions_->LevelSummary(&tmp));
   } else {
     CompactionState* compact = new CompactionState(c);
     status = DoCompactionWork(compact);
@@ -851,12 +869,13 @@ Status DBImpl::FinishCompactionOutputFile(CompactionState* compact,
     s = iter->status();
     delete iter;
     if (s.ok()) {
-      Log(options_.info_log,
-          "Generated table #%llu@%d: %lld keys, %lld bytes",
-          (unsigned long long) output_number,
-          compact->compaction->level(),
-          (unsigned long long) current_entries,
-          (unsigned long long) current_bytes);
+#ifdef WINDOWS
+      Log(options_.info_log, "Generated table #%I64u@%d: %I64u keys, %I64u bytes",
+#else
+      Log(options_.info_log, "Generated table #%llu@%d: %llu keys, %llu bytes",
+#endif
+        (unsigned long long)output_number, (int)compact->compaction->level(),
+        (unsigned long long)current_entries, (unsigned long long)current_bytes);
     }
   }
   return s;
@@ -865,12 +884,16 @@ Status DBImpl::FinishCompactionOutputFile(CompactionState* compact,
 
 Status DBImpl::InstallCompactionResults(CompactionState* compact) {
   mutex_.AssertHeld();
-  Log(options_.info_log,  "Compacted %d@%d + %d@%d files => %lld bytes",
-      compact->compaction->num_input_files(0),
-      compact->compaction->level(),
-      compact->compaction->num_input_files(1),
-      compact->compaction->level() + 1,
-      static_cast<long long>(compact->total_bytes));
+#ifdef WINDOWS
+  Log(options_.info_log,  "Compacted %d@%d + %d@%d files => %I64u bytes",
+#else
+  Log(options_.info_log,  "Compacted %d@%d + %d@%d files => %llu bytes",
+#endif
+    (int)compact->compaction->num_input_files(0),
+    (int)compact->compaction->level(),
+    (int)compact->compaction->num_input_files(1),
+    (int)(compact->compaction->level() + 1),
+    (unsigned long long)compact->total_bytes);
 
   // Add compaction outputs
   compact->compaction->AddInputDeletions(compact->compaction->edit());

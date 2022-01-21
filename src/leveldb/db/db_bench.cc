@@ -355,6 +355,7 @@ class Benchmark {
             "WARNING: Assertions are enabled; benchmarks unnecessarily slow\n");
 #endif
 
+#if SNAPPY
     // See if snappy is working by attempting to compress a compressible string
     const char text[] = "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy";
     std::string compressed;
@@ -363,6 +364,7 @@ class Benchmark {
     } else if (compressed.size() >= sizeof(text)) {
       fprintf(stdout, "WARNING: Snappy compression is not effective\n");
     }
+#endif
   }
 
   void PrintEnvironment() {
@@ -512,12 +514,16 @@ class Benchmark {
         method = &Benchmark::Crc32c;
       } else if (name == Slice("acquireload")) {
         method = &Benchmark::AcquireLoad;
+#ifdef SNAPPY
       } else if (name == Slice("snappycomp")) {
         method = &Benchmark::SnappyCompress;
       } else if (name == Slice("snappyuncomp")) {
         method = &Benchmark::SnappyUncompress;
+#endif
+#ifdef HEAP_PROFILE
       } else if (name == Slice("heapprofile")) {
         HeapProfile();
+#endif
       } else if (name == Slice("stats")) {
         PrintStats("leveldb.stats");
       } else if (name == Slice("sstables")) {
@@ -659,6 +665,7 @@ class Benchmark {
     if (ptr == NULL) exit(1); // Disable unused variable warning.
   }
 
+#ifdef SNAPPY
   void SnappyCompress(ThreadState* thread) {
     RandomGenerator gen;
     Slice input = gen.Generate(Options().block_size);
@@ -705,6 +712,7 @@ class Benchmark {
       thread->stats.AddBytes(bytes);
     }
   }
+#endif
 
   void Open() {
     assert(db_ == NULL);
@@ -933,6 +941,7 @@ class Benchmark {
     reinterpret_cast<WritableFile*>(arg)->Append(Slice(buf, n));
   }
 
+#ifdef HEAP_PROFILE
   void HeapProfile() {
     char fname[100];
     snprintf(fname, sizeof(fname), "%s/heap-%04d", FLAGS_db, ++heap_counter_);
@@ -949,6 +958,7 @@ class Benchmark {
       g_env->DeleteFile(fname);
     }
   }
+#endif
 };
 
 }  // namespace leveldb

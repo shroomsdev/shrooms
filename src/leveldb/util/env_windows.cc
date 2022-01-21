@@ -86,108 +86,106 @@ size_t GetPageSize();
 
 typedef void (*ScheduleProc)(void*);
 
-struct WorkItemWrapper
-{
-    WorkItemWrapper(ScheduleProc proc_,void* content_);
+struct WorkItemWrapper {
+    WorkItemWrapper(ScheduleProc proc_, void *content_);
     ScheduleProc proc;
-    void* pContent;
+    void *pContent;
 };
 
 DWORD WINAPI WorkItemWrapperProc(LPVOID pContent);
 
-class Win32SequentialFile : public SequentialFile
-{
+class Win32SequentialFile : public SequentialFile {
+private:
+    std::string _filename;
+    HANDLE _hFile;
+    BOOL _Init();
+    void _CleanUp();
+    Win32SequentialFile(const std::string &fname);
+    DISALLOW_COPY_AND_ASSIGN(Win32SequentialFile);
+
 public:
     friend class Win32Env;
     virtual ~Win32SequentialFile();
-    virtual Status Read(size_t n, Slice* result, char* scratch);
+    virtual Status Read(size_t n, Slice *result, char *scratch);
     virtual Status Skip(uint64_t n);
     BOOL isEnable();
     virtual std::string GetName() const { return _filename; }
-private:
-    BOOL _Init();
-    void _CleanUp();
-    Win32SequentialFile(const std::string& fname);
-    std::string _filename;
-    ::HANDLE _hFile;
-    DISALLOW_COPY_AND_ASSIGN(Win32SequentialFile);
 };
 
-class Win32RandomAccessFile : public RandomAccessFile
-{
+class Win32RandomAccessFile : public RandomAccessFile {
+private:
+    std::string _filename;
+    HANDLE _hFile;
+    BOOL _Init(LPCWSTR path);
+    void _CleanUp();
+    Win32RandomAccessFile(const std::string &fname);
+    DISALLOW_COPY_AND_ASSIGN(Win32RandomAccessFile);
+
 public:
     friend class Win32Env;
     virtual ~Win32RandomAccessFile();
-    virtual Status Read(uint64_t offset, size_t n, Slice* result,char* scratch) const;
+    virtual Status Read(uint64_t offset, size_t n, Slice *result, char *scratch) const;
     BOOL isEnable();
     virtual std::string GetName() const { return _filename; }
-private:
-    BOOL _Init(LPCWSTR path);
-    void _CleanUp();
-    Win32RandomAccessFile(const std::string& fname);
-    HANDLE _hFile;
-    const std::string _filename;
-    DISALLOW_COPY_AND_ASSIGN(Win32RandomAccessFile);
 };
 
-class Win32WritableFile : public WritableFile
-{
+class Win32WritableFile : public WritableFile {
+private:
+    std::string filename_;
+    HANDLE _hFile;
+
 public:
     Win32WritableFile(const std::string& fname, bool append);
     ~Win32WritableFile();
 
-    virtual Status Append(const Slice& data);
+    virtual Status Append(const Slice &data);
     virtual Status Close();
     virtual Status Flush();
     virtual Status Sync();
     BOOL isEnable();
     virtual std::string GetName() const { return filename_; }
-private:
-    std::string filename_;
-    ::HANDLE _hFile;
 };
 
-class Win32FileLock : public FileLock
-{
+class Win32FileLock : public FileLock {
+private:
+    HANDLE _hFile;
+    std::string _filename;
+    BOOL _Init(LPCWSTR path);
+    void _CleanUp();
+    Win32FileLock(const std::string &fname);
+    DISALLOW_COPY_AND_ASSIGN(Win32FileLock);
+
 public:
     friend class Win32Env;
     virtual ~Win32FileLock();
     BOOL isEnable();
-private:
-    BOOL _Init(LPCWSTR path);
-    void _CleanUp();
-    Win32FileLock(const std::string& fname);
-    HANDLE _hFile;
-    std::string _filename;
-    DISALLOW_COPY_AND_ASSIGN(Win32FileLock);
 };
 
-class Win32Logger : public Logger
-{
+class Win32Logger : public Logger {
+private:
+    explicit Win32Logger(WritableFile *pFile);
+    WritableFile *_pFileProxy;
+    DISALLOW_COPY_AND_ASSIGN(Win32Logger);
+
 public:
     friend class Win32Env;
     virtual ~Win32Logger();
-    virtual void Logv(const char* format, va_list ap);
-private:
-    explicit Win32Logger(WritableFile* pFile);
-    WritableFile* _pFileProxy;
-    DISALLOW_COPY_AND_ASSIGN(Win32Logger);
+    virtual void Logv(const char *format, va_list ap);
 };
 
-class Win32Env : public Env
-{
+class Win32Env : public Env {
 public:
     Win32Env();
     virtual ~Win32Env();
     virtual Status NewSequentialFile(const std::string& fname,
-        SequentialFile** result);
+        SequentialFile **result);
 
     virtual Status NewRandomAccessFile(const std::string& fname,
-        RandomAccessFile** result);
+        RandomAccessFile **result);
     virtual Status NewWritableFile(const std::string& fname,
-        WritableFile** result);
+        WritableFile **result);
     virtual Status NewAppendableFile(const std::string& fname,
-        WritableFile** result);
+        WritableFile **result);
 
     virtual bool FileExists(const std::string& fname);
 
@@ -209,9 +207,7 @@ public:
 
     virtual Status UnlockFile(FileLock* lock);
 
-    virtual void Schedule(
-        void (*function)(void* arg),
-        void* arg);
+    virtual void Schedule(void (*function)(void *arg), void *arg);
 
     virtual void StartThread(void (*function)(void* arg), void* arg);
 
@@ -414,8 +410,8 @@ Win32RandomAccessFile::~Win32RandomAccessFile()
 Status Win32RandomAccessFile::Read(uint64_t offset,size_t n,Slice* result,char* scratch) const
 {
     Status sRet;
-    OVERLAPPED ol = {0};
-    ZeroMemory(&ol,sizeof(ol));
+    OVERLAPPED ol;
+    ZeroMemory(&ol, sizeof(ol));
     ol.Offset = (DWORD)offset;
     ol.OffsetHigh = (DWORD)(offset >> 32);
     DWORD hasRead = 0;
@@ -565,70 +561,62 @@ Win32Logger::~Win32Logger()
         delete _pFileProxy;
 }
 
-void Win32Logger::Logv( const char* format, va_list ap )
-{
-    uint64_t thread_id = ::GetCurrentThreadId();
+void Win32Logger::Logv(const char *format, va_list ap) {
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+
+    uint32_t thread_id = ::GetCurrentThreadId();
 
     // We try twice: the first time with a fixed-size stack allocated buffer,
     // and the second time with a much larger dynamically allocated buffer.
-    char buffer[500];
-    for (int iter = 0; iter < 2; iter++) {
-        char* base;
-        int bufsize;
-        if (iter == 0) {
+    char buffer[512];
+    unsigned int iter;
+    for(iter = 0; iter < 2; iter++) {
+        char *base;
+        unsigned int bufsize;
+        if(!iter) {
             bufsize = sizeof(buffer);
             base = buffer;
         } else {
             bufsize = 30000;
             base = new char[bufsize];
         }
-        char* p = base;
-        char* limit = base + bufsize;
+        char *offset = base;
+        char *limit = base + bufsize;
 
-        SYSTEMTIME st;
-        GetLocalTime(&st);
-        p += snprintf(p, limit - p,
-            "%04d/%02d/%02d-%02d:%02d:%02d.%06d %llx ",
-            int(st.wYear),
-            int(st.wMonth),
-            int(st.wDay),
-            int(st.wHour),
-            int(st.wMinute),
-            int(st.wMinute),
-            int(st.wMilliseconds),
-            static_cast<long long unsigned int>(thread_id));
+        offset += snprintf(offset, limit - offset, "%04d/%02d/%02d-%02d:%02d:%02d.%06d %u ",
+          int(st.wYear), int(st.wMonth), int(st.wDay), int(st.wHour), int(st.wMinute),
+          int(st.wSecond), int(st.wMilliseconds), thread_id);
 
         // Print the message
-        if (p < limit) {
+        if(offset < limit) {
             va_list backup_ap;
             va_copy(backup_ap, ap);
-            p += vsnprintf(p, limit - p, format, backup_ap);
+            offset += vsnprintf(offset, limit - offset, format, backup_ap);
             va_end(backup_ap);
         }
 
         // Truncate to available space if necessary
-        if (p >= limit) {
-            if (iter == 0) {
-                continue;       // Try again with larger buffer
-            } else {
-                p = limit - 1;
-            }
+        if(offset >= limit) {
+            /* Try again with a larger buffer */
+            if(!iter) continue;
+            else offset = limit - 1;
         }
 
-        // Add newline if necessary
-        if (p == base || p[-1] != '\n') {
-            *p++ = '\n';
-        }
+      // Add newline if necessary
+      if((offset == base) || offset[-1] != '\n') {
+        *offset++ = '\n';
+      }
 
-        assert(p <= limit);
-        DWORD hasWritten = 0;
+        assert(offset <= limit);
         if(_pFileProxy){
-            _pFileProxy->Append(Slice(base, p - base));
+            _pFileProxy->Append(Slice(base, offset - base));
             _pFileProxy->Flush();
         }
-        if (base != buffer) {
-            delete[] base;
-        }
+
+        /* Delete dynamic buffer if any */
+        if(iter) delete[] base;
+      
         break;
     }
 }

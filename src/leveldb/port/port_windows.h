@@ -71,7 +71,7 @@ class Mutex {
   friend class CondVar;
   // critical sections are more efficient than mutexes
   // but they are not recursive and can only be used to synchronize threads within the same process
-  // we use opaque void * to avoid including windows.h in port_win.h
+  // we use opaque void * to avoid including windows.h in port_windows.h
   void * cs_;
 
   // No copying
@@ -138,40 +138,32 @@ class AtomicPointer {
   void NoBarrier_Store(void* v);
 };
 
+#ifdef SNAPPY
 inline bool Snappy_Compress(const char* input, size_t length,
                             ::std::string* output) {
-#ifdef SNAPPY
   output->resize(snappy::MaxCompressedLength(length));
   size_t outlen;
   snappy::RawCompress(input, length, &(*output)[0], &outlen);
   output->resize(outlen);
   return true;
-#endif
-
-  return false;
 }
 
 inline bool Snappy_GetUncompressedLength(const char* input, size_t length,
                                          size_t* result) {
-#ifdef SNAPPY
   return snappy::GetUncompressedLength(input, length, result);
-#else
-  return false;
-#endif
 }
 
 inline bool Snappy_Uncompress(const char* input, size_t length,
                               char* output) {
-#ifdef SNAPPY
   return snappy::RawUncompress(input, length, output);
-#else
-  return false;
-#endif
 }
+#endif
 
+#ifdef HEAP_PROFILE
 inline bool GetHeapProfile(void (*func)(void*, const char*, int), void* arg) {
   return false;
 }
+#endif
 
 }
 }

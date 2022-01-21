@@ -159,16 +159,17 @@ TEST(CacheTest, EvictionPolicy) {
 TEST(CacheTest, UseExceedsCacheSize) {
   // Overfill the cache, keeping handles on all inserted entries.
   std::vector<Cache::Handle*> h;
-  for (int i = 0; i < kCacheSize + 100; i++) {
+  uint64_t i;
+  for(i = 0; i < (kCacheSize + 100); i++) {
     h.push_back(InsertAndReturnHandle(1000+i, 2000+i));
   }
 
   // Check that all the entries can be found in the cache.
-  for (int i = 0; i < h.size(); i++) {
+  for(i = 0; i < h.size(); i++) {
     ASSERT_EQ(2000+i, Lookup(1000+i));
   }
 
-  for (int i = 0; i < h.size(); i++) {
+  for(i = 0; i < h.size(); i++) {
     cache_->Release(h[i]);
   }
 }
