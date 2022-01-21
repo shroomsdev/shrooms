@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
+#ifdef LEVELDB_PLATFORM_POSIX
+
 #include "port/port_posix.h"
 
 #include <cstdlib>
 #include <stdio.h>
 #include <string.h>
-#include "util/logging.h"
 
 namespace leveldb {
 namespace port {
@@ -52,3 +53,5 @@ void InitOnce(OnceType* once, void (*initializer)()) {
 
 }  // namespace port
 }  // namespace leveldb
+
+#endif /* LEVELDB_PLATFORM_POSIX */

@@ -6,9 +6,12 @@
 # Uncomment exactly one of the lines labelled (A), (B), and (C) below
 # to switch between compilation modes.
 
-OPT ?= -O2 -DNDEBUG       # (A) Production use (optimized mode)
-# OPT ?= -g2              # (B) Debug mode, w/ full line-level debugging symbols
-# OPT ?= -O2 -g2 -DNDEBUG # (C) Profiling mode: opt, but w/debugging symbols
+# (A) Production use (optimized mode)
+OPT ?= -O2 -DNDEBUG
+# (B) Debug mode, w/ full line-level debugging symbols
+# OPT ?= -g2
+# (C) Profiling mode: opt, but w/debugging symbols
+# OPT ?= -O2 -g2 -DNDEBUG
 #-----------------------------------------------
 
 # detect what platform we're building on
@@ -29,6 +32,11 @@ MEMENVOBJECTS = $(MEMENV_SOURCES:.cc=.o)
 TESTUTIL = ./util/testutil.o
 TESTHARNESS = ./util/testharness.o $(TESTUTIL)
 
+# Note: iOS should probably be using libtool, not ar
+ifeq ($(PLATFORM), IOS)
+AR=xcrun ar
+endif
+
 TESTS = \
 	arena_test \
 	autocompact_test \
@@ -43,6 +51,7 @@ TESTS = \
 	env_test \
 	filename_test \
 	filter_block_test \
+	hash_test \
 	issue178_test \
 	issue200_test \
 	log_test \
@@ -72,7 +81,7 @@ SHARED = $(SHARED1)
 else
 # Update db.h if you change these.
 SHARED_MAJOR = 1
-SHARED_MINOR = 15
+SHARED_MINOR = 20
 SHARED1 = libleveldb.$(PLATFORM_SHARED_EXT)
 SHARED2 = $(SHARED1).$(SHARED_MAJOR)
 SHARED3 = $(SHARED1).$(SHARED_MAJOR).$(SHARED_MINOR)
@@ -88,30 +97,36 @@ $(SHARED3):
 
 endif  # PLATFORM_SHARED_EXT
 
-all: $(SHARED) $(LIBRARY)
+all: $(LIBRARY) $(MEMENVLIBRARY)
+
+shared: $(SHARED)
 
 check: all $(PROGRAMS) $(TESTS)
 	for t in $(TESTS); do echo "***** Running $$t"; ./$$t || exit 1; done
 
 clean:
-	-rm -f $(PROGRAMS) $(BENCHMARKS) $(LIBRARY) $(SHARED) $(MEMENVLIBRARY) */*.o */*/*.o ios-x86/*/*.o ios-arm/*/*.o build_config.mk
+	-rm -f $(PROGRAMS) $(BENCHMARKS) $(LIBRARY) $(MEMENVLIBRARY) $(SHARED) */*.o */*/*.o ios-x86/*/*.o ios-arm/*/*.o build_config.mk
 	-rm -rf ios-x86/* ios-arm/*
 
 $(LIBRARY): $(LIBOBJECTS)
 	rm -f $@
 	$(AR) -rs $@ $(LIBOBJECTS)
 
+$(MEMENVLIBRARY) : $(MEMENVOBJECTS)
+	rm -f $@
+	$(AR) -rs $@ $(MEMENVOBJECTS)
+
 db_bench: db/db_bench.o $(LIBOBJECTS) $(TESTUTIL)
 	$(CXX) $(LDFLAGS) db/db_bench.o $(LIBOBJECTS) $(TESTUTIL) -o $@ $(LIBS)
 
-db_bench_sqlite3: doc/bench/db_bench_sqlite3.o $(LIBOBJECTS) $(TESTUTIL)
-	$(CXX) $(LDFLAGS) doc/bench/db_bench_sqlite3.o $(LIBOBJECTS) $(TESTUTIL) -o $@ -lsqlite3 $(LIBS)
+db_bench_sqlite3: db/db_bench_sqlite3.o $(LIBOBJECTS) $(TESTUTIL)
+	$(CXX) $(LDFLAGS) db/db_bench_sqlite3.o $(LIBOBJECTS) $(TESTUTIL) -o $@ -lsqlite3 $(LIBS)
 
-db_bench_tree_db: doc/bench/db_bench_tree_db.o $(LIBOBJECTS) $(TESTUTIL)
-	$(CXX) $(LDFLAGS) doc/bench/db_bench_tree_db.o $(LIBOBJECTS) $(TESTUTIL) -o $@ -lkyotocabinet $(LIBS)
+db_bench_tree_db: db/db_bench_tree_db.o $(LIBOBJECTS) $(TESTUTIL)
+	$(CXX) $(LDFLAGS) db/db_bench_tree_db.o $(LIBOBJECTS) $(TESTUTIL) -o $@ -lkyotocabinet $(LIBS)
 
-leveldbutil: db/leveldb_main.o $(LIBOBJECTS)
-	$(CXX) $(LDFLAGS) db/leveldb_main.o $(LIBOBJECTS) -o $@ $(LIBS)
+leveldbutil: db/leveldbutil.o $(LIBOBJECTS)
+	$(CXX) $(LDFLAGS) db/leveldbutil.o $(LIBOBJECTS) -o $@ $(LIBS)
 
 arena_test: util/arena_test.o $(LIBOBJECTS) $(TESTHARNESS)
 	$(CXX) $(LDFLAGS) util/arena_test.o $(LIBOBJECTS) $(TESTHARNESS) -o $@ $(LIBS)
@@ -152,6 +167,9 @@ filename_test: db/filename_test.o $(LIBOBJECTS) $(TESTHARNESS)
 filter_block_test: table/filter_block_test.o $(LIBOBJECTS) $(TESTHARNESS)
 	$(CXX) $(LDFLAGS) table/filter_block_test.o $(LIBOBJECTS) $(TESTHARNESS) -o $@ $(LIBS)
 
+hash_test: util/hash_test.o $(LIBOBJECTS) $(TESTHARNESS)
+	$(CXX) $(LDFLAGS) util/hash_test.o $(LIBOBJECTS) $(TESTHARNESS) -o $@ $(LIBS)
+
 issue178_test: issues/issue178_test.o $(LIBOBJECTS) $(TESTHARNESS)
 	$(CXX) $(LDFLAGS) issues/issue178_test.o $(LIBOBJECTS) $(TESTHARNESS) -o $@ $(LIBS)
 
@@ -176,10 +194,6 @@ version_set_test: db/version_set_test.o $(LIBOBJECTS) $(TESTHARNESS)
 write_batch_test: db/write_batch_test.o $(LIBOBJECTS) $(TESTHARNESS)
 	$(CXX) $(LDFLAGS) db/write_batch_test.o $(LIBOBJECTS) $(TESTHARNESS) -o $@ $(LIBS)
 
-$(MEMENVLIBRARY) : $(MEMENVOBJECTS)
-	rm -f $@
-	$(AR) -rs $@ $(MEMENVOBJECTS)
-
 memenv_test : helpers/memenv/memenv_test.o $(MEMENVLIBRARY) $(LIBRARY) $(TESTHARNESS)
 	$(CXX) $(LDFLAGS) helpers/memenv/memenv_test.o $(MEMENVLIBRARY) $(LIBRARY) $(TESTHARNESS) -o $@ $(LIBS)
 
@@ -190,20 +204,21 @@ PLATFORMSROOT=/Applications/Xcode.app/Contents/Developer/Platforms
 SIMULATORROOT=$(PLATFORMSROOT)/iPhoneSimulator.platform/Developer
 DEVICEROOT=$(PLATFORMSROOT)/iPhoneOS.platform/Developer
 IOSVERSION=$(shell defaults read $(PLATFORMSROOT)/iPhoneOS.platform/version CFBundleShortVersionString)
+IOSARCH=-arch armv6 -arch armv7 -arch armv7s -arch arm64
 
 .cc.o:
 	mkdir -p ios-x86/$(dir $@)
-	$(CXX) $(CXXFLAGS) -isysroot $(SIMULATORROOT)/SDKs/iPhoneSimulator$(IOSVERSION).sdk -arch i686 -c $< -o ios-x86/$@
+	xcrun -sdk iphonesimulator $(CXX) $(CXXFLAGS) -isysroot $(SIMULATORROOT)/SDKs/iPhoneSimulator$(IOSVERSION).sdk -arch i686 -arch x86_64 -c $< -o ios-x86/$@
 	mkdir -p ios-arm/$(dir $@)
-	xcrun -sdk iphoneos $(CXX) $(CXXFLAGS) -isysroot $(DEVICEROOT)/SDKs/iPhoneOS$(IOSVERSION).sdk -arch armv6 -arch armv7 -c $< -o ios-arm/$@
-	lipo ios-x86/$@ ios-arm/$@ -create -output $@
+	xcrun -sdk iphoneos $(CXX) $(CXXFLAGS) -isysroot $(DEVICEROOT)/SDKs/iPhoneOS$(IOSVERSION).sdk $(IOSARCH) -c $< -o ios-arm/$@
+	xcrun lipo ios-x86/$@ ios-arm/$@ -create -output $@
 
 .c.o:
 	mkdir -p ios-x86/$(dir $@)
-	$(CC) $(CFLAGS) -isysroot $(SIMULATORROOT)/SDKs/iPhoneSimulator$(IOSVERSION).sdk -arch i686 -c $< -o ios-x86/$@
+	xcrun -sdk iphonesimulator $(CC) $(CFLAGS) -isysroot $(SIMULATORROOT)/SDKs/iPhoneSimulator$(IOSVERSION).sdk -arch i686 -arch x86_64 -c $< -o ios-x86/$@
 	mkdir -p ios-arm/$(dir $@)
-	xcrun -sdk iphoneos $(CC) $(CFLAGS) -isysroot $(DEVICEROOT)/SDKs/iPhoneOS$(IOSVERSION).sdk -arch armv6 -arch armv7 -c $< -o ios-arm/$@
-	lipo ios-x86/$@ ios-arm/$@ -create -output $@
+	xcrun -sdk iphoneos $(CC) $(CFLAGS) -isysroot $(DEVICEROOT)/SDKs/iPhoneOS$(IOSVERSION).sdk $(IOSARCH) -c $< -o ios-arm/$@
+	xcrun lipo ios-x86/$@ ios-arm/$@ -create -output $@
 
 else
 .cc.o:
