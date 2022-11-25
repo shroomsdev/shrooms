@@ -166,6 +166,7 @@ HEADERS += src/qt/bitcoingui.h \
     src/scrypt.h \
     src/pbkdf2.h \
     src/serialize.h \
+    src/sha2.h \
     src/strlcpy.h \
     src/main.h \
     src/miner.h \
@@ -241,6 +242,7 @@ SOURCES += src/qt/bitcoin.cpp src/qt/bitcoingui.cpp \
     src/ntp.cpp \
     src/key.cpp \
     src/script.cpp \
+    src/sha2.cpp \
     src/main.cpp \
     src/miner.cpp \
     src/init.cpp \

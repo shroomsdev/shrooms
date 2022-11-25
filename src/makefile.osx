@@ -90,6 +90,7 @@ OBJS= \
     obj/wallet.o \
     obj/walletdb.o \
     obj/hash.o \
+    obj/sha2.o \
     obj/noui.o \
     obj/pbkdf2.o \
     obj/kernel.o \
