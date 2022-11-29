@@ -242,6 +242,7 @@ SOURCES += src/qt/bitcoin.cpp src/qt/bitcoingui.cpp \
     src/netbase.cpp \
     src/ntp.cpp \
     src/key.cpp \
+    src/base58.cpp \
     src/script.cpp \
     src/sha2.cpp \
     src/ripemd160.cpp \
