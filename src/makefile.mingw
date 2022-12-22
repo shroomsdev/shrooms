@@ -51,6 +51,7 @@ LIBS += -l kernel32 -l user32 -l gdi32 -l comdlg32 -l winspool -l winmm -l shell
 HEADERS = $(wildcard *.h)
 
 OBJS= \
+    obj/leveldb.o \
     obj/alert.o \
     obj/version.o \
     obj/checkpoints.o \
@@ -94,10 +95,10 @@ all: SHROOMSd.exe
 LIBS += $(CURDIR)/leveldb/libleveldb.a $(CURDIR)/leveldb/libmemenv.a
 DEFS += $(addprefix -I,$(CURDIR)/leveldb/include)
 DEFS += $(addprefix -I,$(CURDIR)/leveldb/helpers)
-OBJS += obj/txdb-leveldb.o
+OBJS += obj/leveldb.o
 leveldb/libleveldb.a:
 	cd leveldb; make; cd ..
-obj/txdb-leveldb.o: leveldb/libleveldb.a
+obj/leveldb.o: leveldb/libleveldb.a
 
 obj/%.o: %.cpp $(HEADERS)
 	g++ -c $(CFLAGS) -o $@ $<
