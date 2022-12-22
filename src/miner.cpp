@@ -175,9 +175,7 @@ CBlock* CreateNewBlock(CWallet* pwallet, bool fProofOfStake, int64_t* pFees)
     int64_t nFees = 0;
     {
         LOCK2(cs_main, mempool.cs);
-        CCoinsDB coinsdb("r");
-        CCoinsViewDB viewdb(coinsdb);
-        CCoinsViewCache view(viewdb);
+        CCoinsViewCache view(*pcoinsTip, true);
 
         // Priority order to process transactions
         list<COrphan> vOrphan; // list memory doesn't move
@@ -317,12 +315,16 @@ CBlock* CreateNewBlock(CWallet* pwallet, bool fProofOfStake, int64_t* pFees)
             if (nBlockSigOps + nTxSigOps >= MAX_BLOCK_SIGOPS)
                 continue;
 
+/*
+ * We need to call UpdateCoins using actual block timestamp, so don't perform this here.
+ *
             CTxUndo txundo;
             if (!tx.UpdateCoins(viewTemp, txundo, pindexPrev->nHeight+1, pblock->nTime))
                 continue;
 
             // push changes from the second layer cache to the first one
             viewTemp.Flush();
+*/
 
             // Added
             pblock->vtx.push_back(tx);

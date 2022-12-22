@@ -198,6 +198,7 @@ bool CCoinsView::SetCoins(uint256 txid, const CCoins &coins) { return false; }
 bool CCoinsView::HaveCoins(uint256 txid) { return false; }
 CBlockIndex *CCoinsView::GetBestBlock() { return NULL; }
 bool CCoinsView::SetBestBlock(CBlockIndex *pindex) { return false; }
+bool CCoinsView::BatchWrite(const std::map<uint256, CCoins> &mapCoins, CBlockIndex *pindex) { return false; }
 
 CCoinsViewBacked::CCoinsViewBacked(CCoinsView &viewIn) : base(&viewIn) { }
 bool CCoinsViewBacked::GetCoins(uint256 txid, CCoins &coins) { return base->GetCoins(txid, coins); }
@@ -207,12 +208,7 @@ CBlockIndex *CCoinsViewBacked::GetBestBlock() { return base->GetBestBlock(); }
 bool CCoinsViewBacked::SetBestBlock(CBlockIndex *pindex) { return base->SetBestBlock(pindex); }
 void CCoinsViewBacked::SetBackend(CCoinsView &viewIn) { base = &viewIn; }
 
-CCoinsViewDB::CCoinsViewDB(CCoinsDB &dbIn) : db(dbIn) {}
-bool CCoinsViewDB::GetCoins(uint256 txid, CCoins &coins) { return db.ReadCoins(txid, coins); }
-bool CCoinsViewDB::SetCoins(uint256 txid, const CCoins &coins) { return db.WriteCoins(txid, coins); }
-bool CCoinsViewDB::HaveCoins(uint256 txid) { return db.HaveCoins(txid); }
-CBlockIndex *CCoinsViewDB::GetBestBlock() { return pindexBest; }
-bool CCoinsViewDB::SetBestBlock(CBlockIndex *pindex) { return db.WriteHashBestChain(pindex->GetBlockHash()); }
+bool CCoinsViewBacked::BatchWrite(const std::map<uint256, CCoins> &mapCoins, CBlockIndex *pindex) { return base->BatchWrite(mapCoins, pindex); }
 
 CCoinsViewCache::CCoinsViewCache(CCoinsView &baseIn, bool fDummy) : CCoinsViewBacked(baseIn), pindexTip(NULL) { }
 
@@ -248,16 +244,22 @@ bool CCoinsViewCache::SetBestBlock(CBlockIndex *pindex) {
     return true;
 }
 
-bool CCoinsViewCache::Flush() {
-    for (std::map<uint256,CCoins>::iterator it = cacheCoins.begin(); it != cacheCoins.end(); it++) {
-        if (!base->SetCoins(it->first, it->second))
-            return false;
-    }
-    if (!base->SetBestBlock(pindexTip))
-        return false;
-    cacheCoins.clear();
-    pindexTip = NULL;
+bool CCoinsViewCache::BatchWrite(const std::map<uint256, CCoins> &mapCoins, CBlockIndex *pindex) {
+    for (std::map<uint256, CCoins>::const_iterator it = mapCoins.begin(); it != mapCoins.end(); it++)
+        cacheCoins[it->first] = it->second;
+    pindexTip = pindex;
     return true;
+}
+
+bool CCoinsViewCache::Flush() {
+    bool fOk = base->BatchWrite(cacheCoins, pindexTip);
+    if (fOk)
+        cacheCoins.clear();
+    return fOk;
+}
+
+unsigned int CCoinsViewCache::GetCacheSize() {
+    return cacheCoins.size();
 }
 
 /** CCoinsView that brings transactions from a memorypool into view.
@@ -278,6 +280,8 @@ bool CCoinsViewMemPool::GetCoins(uint256 txid, CCoins &coins) {
 bool CCoinsViewMemPool::HaveCoins(uint256 txid) {
     return mempool.exists(txid) || base->HaveCoins(txid);
 }
+
+CCoinsViewCache *pcoinsTip = NULL;
 
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -482,12 +486,9 @@ int CMerkleTx::SetMerkleBranch(const CBlock* pblock)
     else
     {
         CBlock blockTmp;
-
-
         if (pblock == NULL) {
-            CCoinsDB coinsdb("r");
             CCoins coins;
-            if (coinsdb.ReadCoins(GetHash(), coins)) {
+            if (pcoinsTip->GetCoins(GetHash(), coins)) {
                 CBlockIndex *pindex = FindBlockByHeight(coins.nHeight);
                 if (pindex) {
                     if (!blockTmp.ReadFromDisk(pindex))
@@ -621,7 +622,7 @@ void CTxMemPool::pruneSpent(const uint256 &hashTx, CCoins &coins)
     }
 }
 
-bool CTxMemPool::accept(CCoinsDB& coinsdb, CTransaction &tx, bool fCheckInputs, bool* pfMissingInputs)
+bool CTxMemPool::accept(CTransaction &tx, bool fCheckInputs, bool* pfMissingInputs)
 {
     if (pfMissingInputs)
         *pfMissingInputs = false;
@@ -683,9 +684,7 @@ bool CTxMemPool::accept(CCoinsDB& coinsdb, CTransaction &tx, bool fCheckInputs, 
 
     if (fCheckInputs)
     {
-        CCoinsViewDB viewDB(coinsdb);
-        CCoinsViewMemPool viewMemPool(viewDB, mempool);
-        CCoinsViewCache view(viewMemPool);
+        CCoinsViewCache &view = *pcoinsTip;
 
         // do we already have it?
         if (view.HaveCoins(hash))
@@ -773,9 +772,9 @@ bool CTxMemPool::accept(CCoinsDB& coinsdb, CTransaction &tx, bool fCheckInputs, 
     return true;
 }
 
-bool CTransaction::AcceptToMemoryPool(CCoinsDB& coinsdb, bool fCheckInputs, bool* pfMissingInputs)
+bool CTransaction::AcceptToMemoryPool(bool fCheckInputs, bool* pfMissingInputs)
 {
-    return mempool.accept(coinsdb, *this, fCheckInputs, pfMissingInputs);
+    return mempool.accept(*this, fCheckInputs, pfMissingInputs);
 }
 
 bool CTxMemPool::addUnchecked(const uint256& hash, CTransaction &tx)
@@ -890,27 +889,21 @@ int CMerkleTx::GetBlocksToMaturity() const
 }
 
 
-bool CMerkleTx::AcceptToMemoryPool(CCoinsDB& coinsdb, bool fCheckInputs)
+bool CMerkleTx::AcceptToMemoryPool(bool fCheckInputs)
 {
     if (fClient)
     {
         if (!IsInMainChain() && !ClientCheckInputs())
             return false;
-        return CTransaction::AcceptToMemoryPool(coinsdb, false);
+        return CTransaction::AcceptToMemoryPool(false);
     }
     else
     {
-        return CTransaction::AcceptToMemoryPool(coinsdb, fCheckInputs);
+        return CTransaction::AcceptToMemoryPool(fCheckInputs);
     }
 }
 
-bool CMerkleTx::AcceptToMemoryPool()
-{
-    CCoinsDB coinsdb("r");
-    return AcceptToMemoryPool(coinsdb);
-}
-
-bool CWalletTx::AcceptWalletTransaction(CCoinsDB& coinsdb, bool fCheckInputs)
+bool CWalletTx::AcceptWalletTransaction(bool fCheckInputs)
 {
 
     {
@@ -921,19 +914,13 @@ bool CWalletTx::AcceptWalletTransaction(CCoinsDB& coinsdb, bool fCheckInputs)
             if (!(tx.IsCoinBase() || tx.IsCoinStake()))
             {
                 uint256 hash = tx.GetHash();
-                if (!mempool.exists(hash) && !coinsdb.HaveCoins(hash))
-                    tx.AcceptToMemoryPool(coinsdb, fCheckInputs);
+                if (!mempool.exists(hash) && pcoinsTip->HaveCoins(hash))
+                    tx.AcceptToMemoryPool(fCheckInputs);
             }
         }
-        return AcceptToMemoryPool(coinsdb, fCheckInputs);
+        return AcceptToMemoryPool(fCheckInputs);
     }
     return false;
-}
-
-bool CWalletTx::AcceptWalletTransaction()
-{
-    CCoinsDB coinsdb("r");
-    return AcceptWalletTransaction(coinsdb);
 }
 
 // Return transaction in tx, and if it was found inside a block, its hash is placed in hashBlock
@@ -953,8 +940,7 @@ bool GetTransaction(const uint256 &hash, CTransaction &txOut, uint256 &hashBlock
         if (fAllowSlow) { // use coin database to locate block that contains transaction, and scan it
             int nHeight = -1;
             {
-                CCoinsDB coindb("r");
-                CCoinsViewDB view(coindb);
+                CCoinsViewCache &view = *pcoinsTip;
                 CCoins coins;
                 if (view.GetCoins(hash, coins))
                     nHeight = coins.nHeight;
@@ -1379,7 +1365,7 @@ bool CTransaction::CheckInputs(CCoinsView &inputs, enum CheckSig_mode csmode, bo
 
             // Coin stake tx earns reward instead of paying fee
             uint64_t nCoinAge;
-            if (!GetCoinAge(inputs, nCoinAge))
+            if (!GetCoinAge(nCoinAge))
                 return error("CheckInputs() : %s unable to get coin age for coinstake", GetHash().ToString().substr(0,10).c_str());
 
             int64_t nStakeReward = GetValueOut() - nValueIn;
@@ -1507,6 +1493,10 @@ bool CBlock::DisconnectBlock(CBlockIndex *pindex, CCoinsView &view)
     for (int i = vtx.size() - 1; i >= 0; i--) {
         const CTransaction &tx = vtx[i];
         uint256 hash = tx.GetHash();
+        
+        // don't check coinbase coins for proof-of-stake block
+        if(IsProofOfStake() && tx.IsCoinBase())
+            continue;
 
         // check that all outputs are available
         CCoins outs;
@@ -1534,7 +1524,10 @@ bool CBlock::DisconnectBlock(CBlockIndex *pindex, CCoinsView &view)
                     if (undo.nHeight == 0)
                         return error("DisconnectBlock() : undo data doesn't contain tx metadata? database corrupted");
                     coins.fCoinBase = undo.fCoinBase;
+                    coins.fCoinStake = undo.fCoinStake;
                     coins.nHeight = undo.nHeight;
+                    coins.nTime = undo.nTime;
+                    coins.nBlockTime = undo.nBlockTime;
                     coins.nVersion = undo.nVersion;
                 } else {
                     if (undo.nHeight != 0)
@@ -1628,6 +1621,10 @@ bool CBlock::ConnectBlock(CBlockIndex* pindex, CCoinsView &view, bool fJustCheck
         {
             nValueOut += tx.GetValueOut();
         }
+        
+        // don't create coinbase coins for proof-of-stake block
+        if(IsProofOfStake() && tx.IsCoinBase())
+            continue;
 
         CTxUndo txundo;
         if (!tx.UpdateCoins(view, txundo, pindex->nHeight, pindex->nTime))
@@ -1689,18 +1686,15 @@ bool CBlock::ConnectBlock(CBlockIndex* pindex, CCoinsView &view, bool fJustCheck
 
 bool CBlock::SetBestChain(CBlockIndex* pindexNew)
 {
-    // if this functions exits prematurely, the transaction is aborted
-    CCoinsDB coinsdb;
-    if (!coinsdb.TxnBegin())
-        return error("SetBestChain() : TxnBegin failed");
+    CCoinsViewCache &view = *pcoinsTip;
 
     // special case for attaching the genesis block
     // note that no ConnectBlock is called, so its coinbase output is non-spendable
     if (pindexGenesisBlock == NULL && pindexNew->GetBlockHash() == (!fTestNet ? hashGenesisBlock : hashGenesisBlockTestNet))
     {
-        coinsdb.WriteHashBestChain(pindexNew->GetBlockHash());
-        if (!coinsdb.TxnCommit())
-            return error("SetBestChain() : TxnCommit failed");
+        view.SetBestBlock(pindexNew);
+        if (!view.Flush())
+            return false;
         pindexGenesisBlock = pindexNew;
         pindexBest = pindexNew;
         hashBestChain = pindexNew->GetBlockHash();
@@ -1708,10 +1702,6 @@ bool CBlock::SetBestChain(CBlockIndex* pindexNew)
         nBestChainTrust = pindexNew->nChainTrust;
         return true;
     }
-
-    // create cached view to the coins database
-    CCoinsViewDB viewDB(coinsdb);
-    CCoinsViewCache view(viewDB);
 
     // Find the fork (typically, there is none)
     CBlockIndex* pfork = view.GetBestBlock();
@@ -1749,12 +1739,15 @@ bool CBlock::SetBestChain(CBlockIndex* pindexNew)
         CBlock block;
         if (!block.ReadFromDisk(pindex))
             return error("SetBestBlock() : ReadFromDisk for disconnect failed");
-        if (!block.DisconnectBlock(pindex, view))
+        CCoinsViewCache viewTemp(view, true);
+        if (!block.DisconnectBlock(pindex, viewTemp))
             return error("SetBestBlock() : DisconnectBlock %s failed", pindex->GetBlockHash().ToString().substr(0,20).c_str());
+        if (!viewTemp.Flush())
+            return error("SetBestBlock() : Cache flush failed after disconnect");
 
         // Queue memory transactions to resurrect
         for (const CTransaction& tx : block.vtx)
-            if (!tx.IsCoinBase())
+            if (!tx.IsCoinBase() && !tx.IsCoinStake())
                 vResurrect.push_back(tx);
     }
 
@@ -1770,10 +1763,13 @@ bool CBlock::SetBestChain(CBlockIndex* pindexNew)
                 return error("SetBestBlock() : ReadFromDisk for connect failed");
             pblock = &block;
         }
-        if (!pblock->ConnectBlock(pindex, view)) {
+        CCoinsViewCache viewTemp(view, true);
+        if (!pblock->ConnectBlock(pindex, viewTemp)) {
             InvalidChainFound(pindexNew);
             return error("SetBestBlock() : ConnectBlock %s failed", pindex->GetBlockHash().ToString().substr(0,20).c_str());
         }
+        if (!viewTemp.Flush())
+            return error("SetBestBlock() : Cache flush failed after connect");
 
         // Queue memory transactions to delete
         for (const CTransaction& tx : pblock->vtx)
@@ -1781,11 +1777,10 @@ bool CBlock::SetBestChain(CBlockIndex* pindexNew)
     }
 
     // Make sure it's successfully written to disk before changing memory structure
-    if (!view.Flush())
-        return error("SetBestBlock() : failed to write coin changes");
-    if (!coinsdb.TxnCommit())
-        return error("SetBestBlock() : TxnCommit failed");
-    coinsdb.Close();
+    bool fIsInitialDownload = IsInitialBlockDownload();
+    if (!fIsInitialDownload || view.GetCacheSize()>5000)
+        if (!view.Flush())
+            return false;
 
     // At this point, all changes have been done to the database.
     // Proceed by updating the memory structures.
@@ -1802,7 +1797,7 @@ bool CBlock::SetBestChain(CBlockIndex* pindexNew)
 
     // Resurrect memory transactions that were in the disconnected branch
     for (CTransaction& tx : vResurrect)
-        tx.AcceptToMemoryPool(coinsdb, false);
+        tx.AcceptToMemoryPool(false);
 
     // Delete redundant memory transactions that are in the connected branch
     for (CTransaction& tx : vDelete) {
@@ -1811,7 +1806,6 @@ bool CBlock::SetBestChain(CBlockIndex* pindexNew)
     }
 
     // Update best block in wallet (so we can detect restored wallets)
-    bool fIsInitialDownload = IsInitialBlockDownload();
     if (!fIsInitialDownload)
     {
         const CBlockLocator locator(pindexNew);
@@ -1871,8 +1865,10 @@ bool CBlock::SetBestChain(CBlockIndex* pindexNew)
 // guaranteed to be in main chain by sync-checkpoint. This rule is
 // introduced to help nodes establish a consistent view of the coin
 // age (trust score) of competing branches.
-bool CTransaction::GetCoinAge(CCoinsView& inputs, uint64_t& nCoinAge) const
+bool CTransaction::GetCoinAge(uint64_t& nCoinAge) const
 {
+    CCoinsViewCache &inputs = *pcoinsTip;
+
     CBigNum bnCentSecond = 0;  // coin age in the unit of cent-seconds
     nCoinAge = 0;
 
@@ -1909,13 +1905,10 @@ bool CBlock::GetCoinAge(uint64_t& nCoinAge) const
 {
     nCoinAge = 0;
 
-    CCoinsDB coindb("r");
-    CCoinsViewDB view(coindb);
-
     for (const CTransaction& tx : vtx)
     {
         uint64_t nTxCoinAge;
-        if (tx.GetCoinAge(view, nTxCoinAge))
+        if (tx.GetCoinAge(nTxCoinAge))
             nCoinAge += nTxCoinAge;
         else
             return false;
@@ -1983,11 +1976,8 @@ bool CBlock::AddToBlockIndex(const CDiskBlockPos &pos)
         return false;
 
     // New best
-    if (pindexNew->nChainTrust > nBestChainTrust) {
-        if (!IsInitialBlockDownload() || (pindexNew->nHeight % 1) == 0)
-            if (!SetBestChain(pindexNew))
-                return false;
-    }
+    if (!SetBestChain(pindexNew))
+        return false;
 
     if (pindexNew == pindexBest)
     {
@@ -2532,11 +2522,9 @@ bool LoadBlockIndex(bool fAllowNew)
     // Load block index
     //
     CChainDB chaindb("cr");
-    CCoinsDB coinsdb("cr");
-    if (!LoadBlockIndex(coinsdb, chaindb))
+    if (!LoadBlockIndex(chaindb))
         return false;
     chaindb.Close();
-    coinsdb.Close();
 
     //
     // Init with genesis block
@@ -2824,7 +2812,7 @@ string GetWarnings(string strFor)
 //
 
 
-bool static AlreadyHave(CCoinsDB &coinsdb, const CInv& inv)
+bool static AlreadyHave(const CInv& inv)
 {
     switch (inv.type)
     {
@@ -2836,7 +2824,7 @@ bool static AlreadyHave(CCoinsDB &coinsdb, const CInv& inv)
                 txInMap = mempool.exists(inv.hash);
             }
             return txInMap || mapOrphanTransactions.count(inv.hash) ||
-                coinsdb.HaveCoins(inv.hash);
+                pcoinsTip->HaveCoins(inv.hash);
         }
     case MSG_BLOCK:
         return mapBlockIndex.count(inv.hash) ||
@@ -3094,7 +3082,6 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
                 break;
             }
         }
-        CCoinsDB coinsdb("r");
         for (unsigned int nInv = 0; nInv < vInv.size(); nInv++)
         {
             const CInv &inv = vInv[nInv];
@@ -3103,7 +3090,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
                 return true;
             pfrom->AddInventoryKnown(inv);
 
-            bool fAlreadyHave = AlreadyHave(coinsdb, inv);
+            bool fAlreadyHave = AlreadyHave(inv);
             if (fDebug)
                 printf("  got inventory: %s  %s\n", inv.ToString().c_str(), fAlreadyHave ? "have" : "new");
 
@@ -3282,7 +3269,6 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
         vector<uint256> vWorkQueue;
         vector<uint256> vEraseQueue;
         CDataStream vMsg(vRecv);
-        CCoinsDB coinsdb("r");
         CTransaction tx;
         vRecv >> tx;
 
@@ -3290,7 +3276,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
         pfrom->AddInventoryKnown(inv);
 
         bool fMissingInputs = false;
-        if (tx.AcceptToMemoryPool(coinsdb, true, &fMissingInputs))
+        if (tx.AcceptToMemoryPool(true, &fMissingInputs))
         {
             SyncWithWallets(tx, NULL, true);
             RelayTransaction(tx, inv.hash);
@@ -3310,7 +3296,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
                     CTransaction& orphanTx = mapOrphanTransactions[orphanTxHash];
                     bool fMissingInputs2 = false;
 
-                    if (orphanTx.AcceptToMemoryPool(coinsdb, true, &fMissingInputs2))
+                    if (orphanTx.AcceptToMemoryPool(true, &fMissingInputs2))
                     {
                         printf("   accepted orphan tx %s\n", orphanTxHash.ToString().substr(0,10).c_str());
                         SyncWithWallets(tx, NULL, true);
@@ -3760,11 +3746,10 @@ bool SendMessages(CNode* pto, bool fSendTrickle)
         //
         vector<CInv> vGetData;
         int64_t nNow = GetTime() * 1000000;
-        CCoinsDB coinsdb("r");
         while (!pto->mapAskFor.empty() && (*pto->mapAskFor.begin()).first <= nNow)
         {
             const CInv& inv = (*pto->mapAskFor.begin()).second;
-            if (!AlreadyHave(coinsdb, inv))
+            if (!AlreadyHave(inv))
             {
                 if (fDebugNet)
                     printf("sending getdata: %s\n", inv.ToString().c_str());
