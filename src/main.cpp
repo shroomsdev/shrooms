@@ -135,7 +135,7 @@ void static EraseFromWallets(uint256 hash)
 }
 
 // make sure all wallets know about the given transaction, in the given block
-void SyncWithWallets(const CTransaction& tx, const CBlock* pblock, bool fUpdate, bool fConnect)
+void SyncWithWallets(const uint256 &hash, const CTransaction& tx, const CBlock* pblock, bool fUpdate, bool fConnect)
 {
     if (!fConnect)
     {
@@ -150,7 +150,7 @@ void SyncWithWallets(const CTransaction& tx, const CBlock* pblock, bool fUpdate,
     }
 
     for (CWallet* pwallet : setpwalletRegistered)
-        pwallet->AddToWalletIfInvolvingMe(tx, pblock, fUpdate);
+        pwallet->AddToWalletIfInvolvingMe(hash, tx, pblock, fUpdate);
 }
 
 // notify wallets about a new best chain
@@ -1289,10 +1289,8 @@ unsigned int CTransaction::GetP2SHSigOpCount(CCoinsView& inputs) const
     return nSigOps;
 }
 
-bool CTransaction::UpdateCoins(CCoinsView &inputs, CTxUndo &txundo, int nHeight, unsigned int nTimeStamp) const
+bool CTransaction::UpdateCoins(CCoinsView &inputs, CTxUndo &txundo, int nHeight, unsigned int nTimeStamp, const uint256 &txhash) const
 {
-    uint256 hash = GetHash();
-
     // mark inputs spent
     if (!IsCoinBase()) {
         for (const CTxIn &txin : vin) {
@@ -1313,7 +1311,7 @@ bool CTransaction::UpdateCoins(CCoinsView &inputs, CTxUndo &txundo, int nHeight,
     }
 
     // add outputs
-    if (!inputs.SetCoins(hash, CCoins(*this, nHeight, nTimeStamp)))
+    if (!inputs.SetCoins(txhash, CCoins(*this, nHeight, nTimeStamp)))
         return error("UpdateCoins() : cannot update output");
 
     return true;
@@ -1593,8 +1591,8 @@ bool CBlock::ConnectBlock(CBlockIndex* pindex, CCoinsView &view, bool fJustCheck
         // two in the chain that violate it. This prevents exploiting the issue against nodes in their
         // initial block download.
     
-        for (CTransaction& tx : vtx) {
-            uint256 hash = tx.GetHash();
+        for (unsigned int i=0; i<vtx.size(); i++) {
+            uint256 hash = GetTxHash(i);
             CCoins coins;
             if (view.GetCoins(hash, coins) && !coins.IsPruned())
                 return error("ConnectBlock() : tried to overwrite transaction");
@@ -1606,8 +1604,9 @@ bool CBlock::ConnectBlock(CBlockIndex* pindex, CCoinsView &view, bool fJustCheck
     int64_t nValueIn = 0;
     int64_t nValueOut = 0;
     unsigned int nSigOps = 0;
-    for (CTransaction& tx : vtx)
+    for (unsigned int i=0; i<vtx.size(); i++)
     {
+        const CTransaction &tx = vtx[i];
         nSigOps += tx.GetLegacySigOpCount();
         if (nSigOps > MAX_BLOCK_SIGOPS)
             return DoS(100, error("ConnectBlock() : too many sigops"));
@@ -1646,7 +1645,7 @@ bool CBlock::ConnectBlock(CBlockIndex* pindex, CCoinsView &view, bool fJustCheck
             continue;
 
         CTxUndo txundo;
-        if (!tx.UpdateCoins(view, txundo, pindex->nHeight, pindex->nTime))
+        if (!tx.UpdateCoins(view, txundo, pindex->nHeight, pindex->nTime, GetTxHash(i)))
             return error("ConnectBlock() : UpdateInputs failed");
         if (!tx.IsCoinBase())
             blockundo.vtxundo.push_back(txundo);
@@ -1697,8 +1696,8 @@ bool CBlock::ConnectBlock(CBlockIndex* pindex, CCoinsView &view, bool fJustCheck
         printf("ConnectBlock() : destroy=%s nFees=%" PRId64 "\n", FormatMoney(nFees).c_str(), nFees);
 
     // Watch for transactions paying to me
-    for (CTransaction& tx : vtx)
-        SyncWithWallets(tx, this, true);
+    for (unsigned int i=0; i<vtx.size(); i++)
+        SyncWithWallets(GetTxHash(i), vtx[i], this, true);
 
     return true;
 }
@@ -2003,7 +2002,7 @@ bool CBlock::AddToBlockIndex(const CDiskBlockPos &pos)
         // Notify UI to display prev block's coinbase if it was ours
         static uint256 hashPrevBestCoinBase;
         UpdatedTransaction(hashPrevBestCoinBase);
-        hashPrevBestCoinBase = vtx[0].GetHash();
+        hashPrevBestCoinBase = GetTxHash(0);
     }
 
     uiInterface.NotifyBlocksChanged();
@@ -2150,10 +2149,10 @@ bool CBlock::CheckBlock(bool fCheckPOW, bool fCheckMerkleRoot, bool fCheckSig) c
 
     // Check for duplicate txids. This is caught by ConnectInputs(),
     // but catching it earlier avoids a potential DoS attack:
+    BuildMerkleTree();
     set<uint256> uniqueTx;
-    for (const CTransaction& tx : vtx)
-    {
-        uniqueTx.insert(tx.GetHash());
+    for (unsigned int i=0; i<vtx.size(); i++) {
+        uniqueTx.insert(GetTxHash(i));
     }
     if (uniqueTx.size() != vtx.size())
         return DoS(100, error("CheckBlock() : duplicate transaction"));
@@ -2303,16 +2302,16 @@ bool ProcessBlock(CNode* pfrom, CBlock* pblock)
         bool fFatal = false;
         uint256 hashProofOfStake;
 
-        // Verify proof-of-stake hash target and signatures
+        // Verify proof-of-stake script, hash target and signature
         if (!pblock->CheckSignature(fFatal, hashProofOfStake))
         {
             if (fFatal)
             {
-                // Invalid blockhash/coinstake signature or no generator defined, nothing to do here
+                // Invalid coinstake script, blockhash signature or no generator defined, nothing to do here
                 // This also may occur when supplied proof-of-stake doesn't satisfy required target
                 if (pfrom)
                     pfrom->Misbehaving(100);
-                return error("ProcessBlock() : invalid signature in proof-of-stake block %s", hash.ToString().c_str());
+                return error("ProcessBlock() : invalid signatures found in proof-of-stake block %s", hash.ToString().c_str());
             }
             else
             {
@@ -3361,7 +3360,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
         bool fMissingInputs = false;
         if (tx.AcceptToMemoryPool(true, &fMissingInputs))
         {
-            SyncWithWallets(tx, NULL, true);
+            SyncWithWallets(inv.hash, tx, NULL, true);
             RelayTransaction(tx, inv.hash);
             mapAlreadyAskedFor.erase(inv);
             vWorkQueue.push_back(inv.hash);
@@ -3382,7 +3381,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
                     if (orphanTx.AcceptToMemoryPool(true, &fMissingInputs2))
                     {
                         printf("   accepted orphan tx %s\n", orphanTxHash.ToString().substr(0,10).c_str());
-                        SyncWithWallets(tx, NULL, true);
+                        SyncWithWallets(inv.hash, tx, NULL, true);
                         RelayTransaction(orphanTx, orphanTxHash);
                         mapAlreadyAskedFor.erase(CInv(MSG_TX, orphanTxHash));
                         vWorkQueue.push_back(orphanTxHash);
