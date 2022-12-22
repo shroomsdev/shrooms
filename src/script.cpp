@@ -12,7 +12,7 @@ using namespace boost;
 #include "script.h"
 #include "keystore.h"
 #include "sha1.h"
-#include "sha2.h"
+#include "sha256.h"
 #include "ripemd160.h"
 #include "bignum.h"
 #include "key.h"

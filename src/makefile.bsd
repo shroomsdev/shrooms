@@ -130,7 +130,7 @@ OBJS= \
     obj/walletdb.o \
     obj/hash.o \
     obj/sha1.o \
-    obj/sha2.o \
+    obj/sha256.o \
     obj/ripemd160.o \
     obj/noui.o \
     obj/kernel.o \
