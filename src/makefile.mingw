@@ -61,6 +61,7 @@ OBJS= \
     obj/crypter.o \
     obj/key.o \
     obj/db.o \
+    obj/txdb.o \
     obj/init.o \
     obj/keystore.o \
     obj/main.o \

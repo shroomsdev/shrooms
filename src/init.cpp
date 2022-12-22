@@ -2,7 +2,7 @@
 // Copyright (c) 2009-2012 The Bitcoin developers
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
-#include "db.h"
+#include "txdb.h"
 #include "walletdb.h"
 #include "bitcoinrpc.h"
 #include "net.h"
@@ -522,7 +522,7 @@ bool AppInit2()
     printf("SHROOMS version %s (%s)\n", FormatFullVersion().c_str(), CLIENT_DATE.c_str());
     printf("Using OpenSSL version %s\n", SSLeay_version(SSLEAY_VERSION));
     printf("Using BerkeleyDB version %s\n", DbEnv::version(0, 0, 0));
-//    printf("Using LevelDB version %d.%d\n", leveldb::kMajorVersion, leveldb::kMinorVersion);
+    printf("Using LevelDB version %d.%d\n", leveldb::kMajorVersion, leveldb::kMinorVersion);
     printf("Using Boost v%d.%d.%d\n", BOOST_VERSION / 100000, BOOST_VERSION / 100 % 1000, BOOST_VERSION % 100);
     if (!fLogTimestamps)
         printf("Startup time: %s\n", DateTimeStrFormat("%x %H:%M:%S", GetTime()).c_str());
@@ -701,7 +701,7 @@ bool AppInit2()
     uiInterface.InitMessage(_("Loading block index..."));
     printf("Loading block index...\n");
     nStart = GetTimeMillis();
-    pblocktree = new CBlockTreeDB("cr+");
+    pblocktree = new CBlockTreeDB();
     pcoinsdbview = new CCoinsViewDB();
     pcoinsTip = new CCoinsViewCache(*pcoinsdbview);
 
