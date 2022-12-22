@@ -125,7 +125,7 @@ static const uint64_t nMinDiskSpace = 52428800;
 
 class CReserveKey;
 class CCoinsDB;
-class CChainDB;
+class CBlockTreeDB;
 class CDiskBlockPos;
 class CCoins;
 class CTxUndo;
@@ -2153,6 +2153,10 @@ public:
     bool HaveCoins(uint256 txid);
 };
 
+/** Global variable that points to the active CCoinsView (protected by cs_main) */
 extern CCoinsViewCache *pcoinsTip;
+
+/** Global variable that points to the active block tree (protected by cs_main) */
+extern CBlockTreeDB *pblocktree;
 
 #endif
