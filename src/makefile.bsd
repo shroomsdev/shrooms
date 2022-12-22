@@ -3,10 +3,16 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 USE_UPNP:=0
+BOOST_INCLUDE_PATH=/usr/local/include
+BOOST_LIB_PATH=/usr/local/lib
+BDB_INCLUDE_PATH=/usr/local/include/db48
+BDB_LIB_PATH=/usr/local/lib/db48
+OPENSSL_INCLUDE_PATH=/usr/local/include
+OPENSSL_LIB_PATH=/usr/local/lib
 
 LINK:=$(CXX)
 
-DEFS=-DBOOST_SPIRIT_THREADSAFE
+DEFS=-DBOOST_SPIRIT_THREADSAFE -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS
 
 DEFS += $(addprefix -I,$(CURDIR) $(CURDIR)/obj $(BOOST_INCLUDE_PATH) $(BDB_INCLUDE_PATH) $(OPENSSL_INCLUDE_PATH))
 LIBS = $(addprefix -L,$(BOOST_LIB_PATH) $(BDB_LIB_PATH) $(OPENSSL_LIB_PATH))
@@ -43,7 +49,6 @@ endif
 LIBS+= \
  -Wl,-B$(LMODE2) \
    -l z \
-   -l dl \
    -l pthread
 
 
@@ -85,7 +90,7 @@ DEBUGFLAGS=-g
 
 # CXXFLAGS can be specified on the make command line, so we use xCXXFLAGS that only
 # adds some defaults in front. Unfortunately, CXXFLAGS=... $(CXXFLAGS) does not work.
-xCXXFLAGS=-O0 -msse2 -pthread -Wall -Wextra -Wno-ignored-qualifiers -Wformat -Wformat-security -Wno-unused-parameter \
+xCXXFLAGS=-O0 -msse2 -pthread -Wall -Wextra -Wformat -Wformat-security -Wno-unused-parameter -std=c++11 \
     $(DEBUGFLAGS) $(DEFS) $(HARDENING) $(CXXFLAGS)
 
 # LDFLAGS can be specified on the make command line, so we use xLDFLAGS that only
@@ -93,16 +98,18 @@ xCXXFLAGS=-O0 -msse2 -pthread -Wall -Wextra -Wno-ignored-qualifiers -Wformat -Wf
 xLDFLAGS=$(LDHARDENING) $(LDFLAGS)
 
 OBJS= \
+    obj/leveldb.o \
     obj/alert.o \
     obj/version.o \
     obj/checkpoints.o \
     obj/netbase.o \
+    obj/ntp.o \
     obj/addrman.o \
     obj/crypter.o \
     obj/key.o \
     obj/db.o \
+    obj/txdb.o \
     obj/init.o \
-    obj/irc.o \
     obj/keystore.o \
     obj/main.o \
     obj/miner.o \
@@ -115,38 +122,32 @@ OBJS= \
     obj/rpcwallet.o \
     obj/rpcblockchain.o \
     obj/rpcrawtransaction.o \
+    obj/base58.o \
     obj/script.o \
     obj/sync.o \
     obj/util.o \
     obj/wallet.o \
     obj/walletdb.o \
+    obj/hash.o \
+    obj/sha2.o \
+    obj/ripemd160.o \
     obj/noui.o \
     obj/kernel.o \
     obj/pbkdf2.o \
     obj/scrypt.o \
     obj/scrypt-arm.o \
     obj/scrypt-x86.o \
-    obj/scrypt-x86_64.o \
-    obj/zerocoin/Accumulator.o \
-    obj/zerocoin/AccumulatorProofOfKnowledge.o \
-    obj/zerocoin/Coin.o \
-    obj/zerocoin/CoinSpend.o \
-    obj/zerocoin/Commitment.o \
-    obj/zerocoin/ParamGeneration.o \
-    obj/zerocoin/Params.o \
-    obj/zerocoin/SerialNumberSignatureOfKnowledge.o \
-    obj/zerocoin/SpendMetaData.o \
-    obj/zerocoin/ZeroTest.o
+    obj/scrypt-x86_64.o
 
 all: SHROOMSd
 
 LIBS += $(CURDIR)/leveldb/libleveldb.a $(CURDIR)/leveldb/libmemenv.a
 DEFS += $(addprefix -I,$(CURDIR)/leveldb/include)
 DEFS += $(addprefix -I,$(CURDIR)/leveldb/helpers)
-OBJS += obj/txdb-leveldb.o
+OBJS += obj/leveldb.o
 leveldb/libleveldb.a:
-	@echo "Building LevelDB ..."; cd leveldb; make libleveldb.a libmemenv.a; cd ..;
-obj/txdb-leveldb.o: leveldb/libleveldb.a
+	@echo "Building LevelDB ..."; cd leveldb; gmake libleveldb.a libmemenv.a; cd ..;
+obj/leveldb.o: leveldb/libleveldb.a
 
 # auto-generated dependencies:
 -include obj/*.P
@@ -172,22 +173,13 @@ obj/%.o: %.cpp
 	      -e '/^$$/ d' -e 's/$$/ :/' < $(@:%.o=%.d) >> $(@:%.o=%.P); \
 	  rm -f $(@:%.o=%.d)
 
-obj/zerocoin/%.o: zerocoin/%.cpp
-	$(CXX) -c $(xCXXFLAGS) -MMD -MF $(@:%.o=%.d) -o $@ $<
-	@cp $(@:%.o=%.d) $(@:%.o=%.P); \
-	  sed -e 's/#.*//' -e 's/^[^:]*: *//' -e 's/ *\\$$//' \
-	      -e '/^$$/ d' -e 's/$$/ :/' < $(@:%.o=%.d) >> $(@:%.o=%.P); \
-	  rm -f $(@:%.o=%.d)
-
 SHROOMSd: $(OBJS:obj/%=obj/%)
 	$(LINK) $(xCXXFLAGS) -o $@ $^ $(xLDFLAGS) $(LIBS)
 
 clean:
 	-rm -f SHROOMSd
 	-rm -f obj/*.o
-	-rm -f obj/zerocoin/*.o
 	-rm -f obj/*.P
-	-rm -f obj/zerocoin/*.P
 	-rm -f obj/build.h
 
 FORCE:

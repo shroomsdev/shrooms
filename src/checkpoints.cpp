@@ -11,9 +11,6 @@
 #include "main.h"
 #include "uint256.h"
 
-
-static const int nCheckpointSpan = 10;
-
 namespace Checkpoints
 {
     typedef std::map<int, uint256> MapCheckpoints;
@@ -28,6 +25,21 @@ namespace Checkpoints
     static MapCheckpoints mapCheckpoints =
         boost::assign::map_list_of
         ( 0,      hashGenesisBlock )
+        (1, uint256("0x00000000261c24cb0d023429033337b942aa8174df1c3f1ab757ec2c79afc3d8"))
+        (8763, uint256("0x0176125d3d91821c3beb8cf6be6e01ca5a4e845dd1a970dc6b36e0b28c0ca7fd"))
+        (19999, uint256("0x7976b7b7812f1f77a20a982df6f0a8c8da57fc0383e0f3b2797b08a27b18bf7b"))
+        (159999, uint256("0x95e6bedff4cb86b71a2ce9c39b1627612e5c2b731571a945f1adf4175fe634b4"))
+        (259999, uint256("0xd612babd1aa023cd575b4f06130c63ca2e5eb1b6e89ba401d1fe7718aa99465c"))
+        (359999, uint256("0xe995d4bfa4458039da78fc3580a1b31ccd1646edfccfda0794e1b152cb67caad"))
+        (423065, uint256("0x9aa7c8932acca6c5615bc7d02aa4e58c5b3436b926088401b648b0ee37d03286"))
+        (460713, uint256("0x6cc5eb4cf5fa0f0978327cba6122ad6b1ff436130873eae7eb9dda4a6ed16ed1"))
+        (515001, uint256("0xdf9eab7af646e90b6c8e6c5d24db0c8af8845c2876a2c7a1c8cce23186069074"))
+        (565001, uint256("0x6d81f3f6893a5a5433174920e9a927dec8f906de3445e38409e33f3f418a165e"))
+        (621439, uint256("0x82e2fe84900f8379410a68e9a486679fd707fcdabfc9440119bceaf1bf4da966"))
+        (675571, uint256("0x254a0ada510d8771d8a287107eb32f006825cd5c40948763ea6e0fa1d14b98a1"))
+        (811949, uint256("0x882e216231b6e8f7f3bb2d44f4660388e7a582f51f7e62c1e6be62ae0cae059b"))
+        (911637, uint256("0xa0a1d3c9ef72d0cd65e67282cae68f99c64b711d19c4567489f0c6bef7905196"))
+        (1178123, uint256("0x4ca1032c0bf20529dd63278a064dc67b7261a38e4fae440f83285aa3167aa40f"))
 		
     ;
 
@@ -131,15 +143,14 @@ namespace Checkpoints
 
     bool WriteSyncCheckpoint(const uint256& hashCheckpoint)
     {
-        CTxDB txdb;
-        txdb.TxnBegin();
-        if (!txdb.WriteSyncCheckpoint(hashCheckpoint))
         {
-            txdb.TxnAbort();
-            return error("WriteSyncCheckpoint(): failed to write to db sync checkpoint %s", hashCheckpoint.ToString().c_str());
+            LOCK(Checkpoints::cs_hashSyncCheckpoint);
+
+            if (!pblocktree->WriteSyncCheckpoint(hashCheckpoint))
+            {
+                return error("WriteSyncCheckpoint(): failed to write to db sync checkpoint %s", hashCheckpoint.ToString().c_str());
+            }
         }
-        if (!txdb.TxnCommit())
-            return error("WriteSyncCheckpoint(): failed to commit to db sync checkpoint %s", hashCheckpoint.ToString().c_str());
 
         Checkpoints::hashSyncCheckpoint = hashCheckpoint;
         return true;
@@ -157,14 +168,13 @@ namespace Checkpoints
                 return false;
             }
 
-            CTxDB txdb;
             CBlockIndex* pindexCheckpoint = mapBlockIndex[hashPendingCheckpoint];
             if (!pindexCheckpoint->IsInMainChain())
             {
                 CBlock block;
                 if (!block.ReadFromDisk(pindexCheckpoint))
                     return error("AcceptPendingSyncCheckpoint: ReadFromDisk failed for sync checkpoint %s", hashPendingCheckpoint.ToString().c_str());
-                if (!block.SetBestChain(txdb, pindexCheckpoint))
+                if (!SetBestChain(pindexCheckpoint))
                 {
                     hashInvalidCheckpoint = hashPendingCheckpoint;
                     return error("AcceptPendingSyncCheckpoint: SetBestChain failed for sync checkpoint %s", hashPendingCheckpoint.ToString().c_str());
@@ -180,7 +190,7 @@ namespace Checkpoints
             // relay the checkpoint
             if (!checkpointMessage.IsNull())
             {
-                BOOST_FOREACH(CNode* pnode, vNodes)
+                for (CNode* pnode : vNodes)
                     checkpointMessage.RelayTo(pnode);
             }
             return true;
@@ -188,14 +198,14 @@ namespace Checkpoints
         return false;
     }
 
-    // Automatically select a suitable sync-checkpoint 
-    uint256 AutoSelectSyncCheckpoint()
-    {
+    /* Checkpoint master: selects a block for checkpointing according to the policy */
+    uint256 AutoSelectSyncCheckpoint() {
+        /* No immediate checkpointing on either PoW or PoS blocks,
+         * select by depth in the main chain rather than block time */
         const CBlockIndex *pindex = pindexBest;
-        // Search backward for a block within max span and maturity window
-        while (pindex->pprev && (pindex->GetBlockTime() + nCheckpointSpan * nTargetSpacing > pindexBest->GetBlockTime() || pindex->nHeight + nCheckpointSpan > pindexBest->nHeight))
-            pindex = pindex->pprev;
-        return pindex->GetBlockHash();
+        while(pindex->pprev && (pindex->nHeight + (int)GetArg("-checkpointdepth", CHECKPOINT_DEFAULT_DEPTH))
+          > pindexBest->nHeight) pindex = pindex->pprev;
+        return(pindex->GetBlockHash());
     }
 
     // Check against synchronized checkpoint
@@ -248,11 +258,10 @@ namespace Checkpoints
         {
             // checkpoint block accepted but not yet in main chain
             printf("ResetSyncCheckpoint: SetBestChain to hardened checkpoint %s\n", hash.ToString().c_str());
-            CTxDB txdb;
             CBlock block;
             if (!block.ReadFromDisk(mapBlockIndex[hash]))
                 return error("ResetSyncCheckpoint: ReadFromDisk failed for hardened checkpoint %s", hash.ToString().c_str());
-            if (!block.SetBestChain(txdb, mapBlockIndex[hash]))
+            if (!SetBestChain(mapBlockIndex[hash]))
             {
                 return error("ResetSyncCheckpoint: SetBestChain failed for hardened checkpoint %s", hash.ToString().c_str());
             }
@@ -332,7 +341,7 @@ namespace Checkpoints
         // Relay checkpoint
         {
             LOCK(cs_vNodes);
-            BOOST_FOREACH(CNode* pnode, vNodes)
+            for (CNode* pnode : vNodes)
                 checkpoint.RelayTo(pnode);
         }
         return true;
@@ -351,7 +360,7 @@ namespace Checkpoints
 }
 
 // ppcoin: sync-checkpoint master key
-const std::string CSyncCheckpoint::strMasterPubKey = "04a18357665ed7a802dcf252ef528d3dc786da38653b51d1ab8e9f4820b55aca807892a056781967315908ac205940ec9d6f2fd0a85941966971eac7e475a27826";
+const std::string CSyncCheckpoint::strMasterPubKey = "0453d2d10b0103f98315808744335e4561d1c717080fecd9655aef596c2196e1d70cd6edeaa14d8dcce2929d867f3f21b57db51fd021599330359701b71557ec18";
 
 std::string CSyncCheckpoint::strMasterPrivKey = "";
 
@@ -397,7 +406,6 @@ bool CSyncCheckpoint::ProcessSyncCheckpoint(CNode* pfrom)
     if (!Checkpoints::ValidateSyncCheckpoint(hashCheckpoint))
         return false;
 
-    CTxDB txdb;
     CBlockIndex* pindexCheckpoint = mapBlockIndex[hashCheckpoint];
     if (!pindexCheckpoint->IsInMainChain())
     {
@@ -405,7 +413,7 @@ bool CSyncCheckpoint::ProcessSyncCheckpoint(CNode* pfrom)
         CBlock block;
         if (!block.ReadFromDisk(pindexCheckpoint))
             return error("ProcessSyncCheckpoint: ReadFromDisk failed for sync checkpoint %s", hashCheckpoint.ToString().c_str());
-        if (!block.SetBestChain(txdb, pindexCheckpoint))
+        if (!SetBestChain(pindexCheckpoint))
         {
             Checkpoints::hashInvalidCheckpoint = hashCheckpoint;
             return error("ProcessSyncCheckpoint: SetBestChain failed for sync checkpoint %s", hashCheckpoint.ToString().c_str());

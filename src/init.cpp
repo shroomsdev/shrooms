@@ -10,7 +10,6 @@
 #include "util.h"
 #include "ui_interface.h"
 #include "checkpoints.h"
-#include "zerocoin/ZeroTest.h"
 #include <boost/filesystem.hpp>
 #include <boost/filesystem/fstream.hpp>
 #include <boost/filesystem/convenience.hpp>
@@ -21,7 +20,6 @@
 #ifndef WIN32
 #include <signal.h>
 #endif
-
 
 using namespace std;
 using namespace boost;
@@ -60,6 +58,8 @@ void StartShutdown()
 #endif
 }
 
+static CCoinsViewDB *pcoinsdbview;
+
 void Shutdown(void* parg)
 {
     static CCriticalSection cs_Shutdown;
@@ -82,9 +82,15 @@ void Shutdown(void* parg)
     {
         fShutdown = true;
         nTransactionsUpdated++;
-//        CTxDB().Close();
         bitdb.Flush(false);
         StopNode();
+        {
+            LOCK(cs_main);
+            pcoinsTip->Flush();
+            pblocktree->Flush();
+            delete pcoinsTip;
+            delete pcoinsdbview;
+        }
         bitdb.Flush(true);
         boost::filesystem::remove(GetPidFile());
         UnregisterWallet(pwalletMain);
@@ -146,7 +152,7 @@ bool AppInit(int argc, char* argv[])
         if (mapArgs.count("-?") || mapArgs.count("--help"))
         {
             // First part of help message is specific to bitcoind / RPC client
-            std::string strUsage = _("SHROOMS version") + " " + FormatFullVersion() + "\n\n" +
+            std::string strUsage = _("SHROOMS ") + FormatFullVersion() + "\n\n" +
                 _("Usage:") + "\n" +
                   "  SHROOMSd [options]                     " + "\n" +
                   "  SHROOMSd [options] <command> [params]  " + _("Send command to -server or SHROOMSd") + "\n" +
@@ -248,7 +254,6 @@ std::string HelpMessage()
         "  -externalip=<ip>       " + _("Specify your own public address") + "\n" +
         "  -onlynet=<net>         " + _("Only connect to nodes in network <net> (IPv4, IPv6 or Tor)") + "\n" +
         "  -discover              " + _("Discover own IP address (default: 1 when listening and no -externalip)") + "\n" +
-        "  -irc                   " + _("Find peers using internet relay chat (default: 0)") + "\n" +
         "  -listen                " + _("Accept connections from outside (default: 1 if no -proxy or -connect)") + "\n" +
         "  -bind=<addr>           " + _("Bind to given address. Use [host]:port notation for IPv6") + "\n" +
         "  -dnsseed               " + _("Find peers using DNS lookup (default: 1)") + "\n" +
@@ -297,6 +302,7 @@ std::string HelpMessage()
         "  -upgradewallet         " + _("Upgrade wallet to latest format") + "\n" +
         "  -keypool=<n>           " + _("Set key pool size to <n> (default: 100)") + "\n" +
         "  -rescan                " + _("Rescan the block chain for missing wallet transactions") + "\n" +
+        "  -splitthreshold=<n>    " + _("Set stake split threshold within range (default: 0)") + "\n" +
         "  -salvagewallet         " + _("Attempt to recover private keys from a corrupt wallet.dat") + "\n" +
         "  -checkblocks=<n>       " + _("How many blocks to check at startup (default: 2500, 0 = all)") + "\n" +
         "  -checklevel=<n>        " + _("How thorough the block verification is (0-6, default: 1)") + "\n" +
@@ -382,11 +388,6 @@ bool AppInit2()
         CheckpointsMode = Checkpoints::PERMISSIVE;
 
     nDerivationMethodIndex = 0;
-
-    fTestNet = GetBoolArg("-testnet");
-    if (fTestNet) {
-        SoftSetBoolArg("-irc", true);
-    }
 
     if (mapArgs.count("-bind")) {
         // when specifying an explicit binding address, you want to listen on it
@@ -520,6 +521,9 @@ bool AppInit2()
     printf("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
     printf("SHROOMS version %s (%s)\n", FormatFullVersion().c_str(), CLIENT_DATE.c_str());
     printf("Using OpenSSL version %s\n", SSLeay_version(SSLEAY_VERSION));
+    printf("Using BerkeleyDB version %s\n", DbEnv::version(0, 0, 0));
+    printf("Using LevelDB version %d.%d\n", leveldb::kMajorVersion, leveldb::kMinorVersion);
+    printf("Using Boost v%d.%d.%d\n", BOOST_VERSION / 100000, BOOST_VERSION / 100 % 1000, BOOST_VERSION % 100);
     if (!fLogTimestamps)
         printf("Startup time: %s\n", DateTimeStrFormat("%x %H:%M:%S", GetTime()).c_str());
     printf("Default data directory %s\n", GetDefaultDataDir().string().c_str());
@@ -565,6 +569,14 @@ bool AppInit2()
             return InitError(_("wallet.dat corrupt, salvage failed"));
     }
 
+        // Split threshold
+	    if (mapArgs.count("-splitthreshold")) 
+    { 
+       if (!ParseMoney(mapArgs["-splitthreshold"], nSplitThreshold)) 
+           return InitError(strprintf(_("Invalid amount for -splitthreshold=<amount>: '%s'"), mapArgs["-splitthreshold"].c_str())); 
+       printf("splitthreshold set to %" PRId64 "\n",nSplitThreshold / COIN); 
+    }
+	
     // ********************************************************* Step 6: network initialization
 
     int nSocksVersion = GetArg("-socks", 5);
@@ -574,7 +586,7 @@ bool AppInit2()
 
     if (mapArgs.count("-onlynet")) {
         std::set<enum Network> nets;
-        BOOST_FOREACH(std::string snet, mapMultiArgs["-onlynet"]) {
+        for (std::string snet : mapMultiArgs["-onlynet"]) {
             enum Network net = ParseNetwork(snet);
             if (net == NET_UNROUTABLE)
                 return InitError(strprintf(_("Unknown network specified in -onlynet: '%s'"), snet.c_str()));
@@ -618,7 +630,7 @@ bool AppInit2()
     }
 
     // see Step 2: parameter interactions for more information about these
-    fNoListen = !GetBoolArg("-listen", true);
+    fListen = GetBoolArg("-listen", true);
     fDiscover = GetBoolArg("-discover", true);
     fNameLookup = GetBoolArg("-dns", true);
 #ifdef USE_UPNP
@@ -626,11 +638,11 @@ bool AppInit2()
 #endif
 
     bool fBound = false;
-    if (!fNoListen)
+    if (fListen)
     {
         std::string strError;
         if (mapArgs.count("-bind")) {
-            BOOST_FOREACH(std::string strBind, mapMultiArgs["-bind"]) {
+            for (std::string strBind : mapMultiArgs["-bind"]) {
                 CService addrBind;
                 if (!Lookup(strBind.c_str(), addrBind, GetListenPort(), false))
                     return InitError(strprintf(_("Cannot resolve -bind address: '%s'"), strBind.c_str()));
@@ -650,7 +662,7 @@ bool AppInit2()
 
     if (mapArgs.count("-externalip"))
     {
-        BOOST_FOREACH(string strAddr, mapMultiArgs["-externalip"]) {
+        for (string strAddr : mapMultiArgs["-externalip"]) {
             CService addrLocal(strAddr, GetListenPort(), fNameLookup);
             if (!addrLocal.IsValid())
                 return InitError(strprintf(_("Cannot resolve -externalip address: '%s'"), strAddr.c_str()));
@@ -673,7 +685,7 @@ bool AppInit2()
             InitError(_("Unable to sign checkpoint, wrong checkpointkey?\n"));
     }
 
-    BOOST_FOREACH(string strDest, mapMultiArgs["-seednode"])
+    for (string strDest : mapMultiArgs["-seednode"])
         AddOneShot(strDest);
 
     // ********************************************************* Step 7: load blockchain
@@ -686,17 +698,13 @@ bool AppInit2()
         return InitError(msg);
     }
 
-    if (GetBoolArg("-loadblockindextest"))
-    {
-        CTxDB txdb("r");
-        txdb.LoadBlockIndex();
-        PrintBlockTree();
-        return false;
-    }
-
     uiInterface.InitMessage(_("Loading block index..."));
     printf("Loading block index...\n");
     nStart = GetTimeMillis();
+    pblocktree = new CBlockTreeDB();
+    pcoinsdbview = new CCoinsViewDB();
+    pcoinsTip = new CCoinsViewCache(*pcoinsdbview);
+
     if (!LoadBlockIndex())
         return InitError(_("Error loading blkindex.dat"));
 
@@ -709,7 +717,7 @@ bool AppInit2()
         printf("Shutdown requested. Exiting.\n");
         return false;
     }
-    printf(" block index %15"PRId64"ms\n", GetTimeMillis() - nStart);
+    printf(" block index %15" PRId64 "ms\n", GetTimeMillis() - nStart);
 
     if (GetBoolArg("-printblockindex") || GetBoolArg("-printblocktree"))
     {
@@ -738,16 +746,6 @@ bool AppInit2()
         if (nFound == 0)
             printf("No blocks matching %s were found\n", strMatch.c_str());
         return false;
-    }
-
-    // ********************************************************* Testing Zerocoin
-
-
-    if (GetBoolArg("-zerotest", false))
-    {
-        printf("\n=== ZeroCoin tests start ===\n");
-        Test_RunAllTests();
-        printf("=== ZeroCoin tests end ===\n\n");
     }
 
     // ********************************************************* Step 8: load wallet
@@ -810,7 +808,7 @@ bool AppInit2()
     }
 
     printf("%s", strErrors.str().c_str());
-    printf(" wallet      %15"PRId64"ms\n", GetTimeMillis() - nStart);
+    printf(" wallet      %15" PRId64 "ms\n", GetTimeMillis() - nStart);
 
     RegisterWallet(pwalletMain);
 
@@ -830,16 +828,21 @@ bool AppInit2()
         printf("Rescanning last %i blocks (from block %i)...\n", pindexBest->nHeight - pindexRescan->nHeight, pindexRescan->nHeight);
         nStart = GetTimeMillis();
         pwalletMain->ScanForWalletTransactions(pindexRescan, true);
-        printf(" rescan      %15"PRId64"ms\n", GetTimeMillis() - nStart);
+        printf(" rescan      %15" PRId64 "ms\n", GetTimeMillis() - nStart);
     }
 
     // ********************************************************* Step 9: import blocks
+    
+    // scan for better chains in the block chain database, that are not yet connected in the active best chain
+    uiInterface.InitMessage(_("Importing blocks from block database..."));
+    if (!ConnectBestBlock())
+        strErrors << "Failed to connect best block";
 
     if (mapArgs.count("-loadblock"))
     {
         uiInterface.InitMessage(_("Importing blockchain data file."));
 
-        BOOST_FOREACH(string strFile, mapMultiArgs["-loadblock"])
+        for (string strFile : mapMultiArgs["-loadblock"])
         {
             FILE *file = fopen(strFile.c_str(), "rb");
             if (file)
@@ -872,7 +875,7 @@ bool AppInit2()
             printf("Invalid or missing peers.dat; recreating\n");
     }
 
-    printf("Loaded %i addresses from peers.dat  %"PRId64"ms\n",
+    printf("Loaded %i addresses from peers.dat  %" PRId64 "ms\n",
            addrman.size(), GetTimeMillis() - nStart);
 
     // ********************************************************* Step 11: start node
@@ -883,11 +886,11 @@ bool AppInit2()
     RandAddSeedPerfmon();
 
     //// debug print
-    printf("mapBlockIndex.size() = %"PRIszu"\n",   mapBlockIndex.size());
+    printf("mapBlockIndex.size() = %" PRIszu "\n",   mapBlockIndex.size());
     printf("nBestHeight = %d\n",            nBestHeight);
-    printf("setKeyPool.size() = %"PRIszu"\n",      pwalletMain->setKeyPool.size());
-    printf("mapWallet.size() = %"PRIszu"\n",       pwalletMain->mapWallet.size());
-    printf("mapAddressBook.size() = %"PRIszu"\n",  pwalletMain->mapAddressBook.size());
+    printf("setKeyPool.size() = %" PRIszu "\n",      pwalletMain->setKeyPool.size());
+    printf("mapWallet.size() = %" PRIszu "\n",       pwalletMain->mapWallet.size());
+    printf("mapAddressBook.size() = %" PRIszu "\n",  pwalletMain->mapAddressBook.size());
 
     if (!NewThread(StartNode, NULL))
         InitError(_("Error: could not start node"));

@@ -81,12 +81,16 @@ class Repairer {
       }
       Log(options_.info_log,
           "**** Repaired leveldb %s; "
+#ifdef WINDOWS
+          "recovered %d files; %I64u bytes. "
+#else
           "recovered %d files; %llu bytes. "
+#endif
           "Some data may have been lost. "
           "****",
           dbname_.c_str(),
-          static_cast<int>(tables_.size()),
-          bytes);
+          (int)tables_.size(),
+          (unsigned long long)bytes);
     }
     return status;
   }
@@ -151,9 +155,12 @@ class Repairer {
       std::string logname = LogFileName(dbname_, logs_[i]);
       Status status = ConvertLogToTable(logs_[i]);
       if (!status.ok()) {
+#ifdef WINDOWS
+        Log(options_.info_log, "Log #%I64u: ignoring conversion error: %s",
+#else
         Log(options_.info_log, "Log #%llu: ignoring conversion error: %s",
-            (unsigned long long) logs_[i],
-            status.ToString().c_str());
+#endif
+          (unsigned long long)logs_[i], status.ToString().c_str());
       }
       ArchiveFile(logname);
     }
@@ -166,10 +173,12 @@ class Repairer {
       uint64_t lognum;
       virtual void Corruption(size_t bytes, const Status& s) {
         // We print error messages for corruption, but continue repairing.
+#ifdef WINDOWS
+        Log(info_log, "Log #%I64u: dropping %d bytes; %s",
+#else
         Log(info_log, "Log #%llu: dropping %d bytes; %s",
-            (unsigned long long) lognum,
-            static_cast<int>(bytes),
-            s.ToString().c_str());
+#endif
+          (unsigned long long)lognum, (int)bytes, s.ToString().c_str());
       }
     };
 
@@ -186,7 +195,7 @@ class Repairer {
     reporter.env = env_;
     reporter.info_log = options_.info_log;
     reporter.lognum = log;
-    // We intentially make log::Reader do checksumming so that
+    // We intentionally make log::Reader do checksumming so that
     // corruptions cause entire commits to be skipped instead of
     // propagating bad information (like overly large sequence
     // numbers).
@@ -211,9 +220,12 @@ class Repairer {
       if (status.ok()) {
         counter += WriteBatchInternal::Count(&batch);
       } else {
+#ifdef WINDOWS
+        Log(options_.info_log, "Log #%I64u: ignoring %s",
+#else
         Log(options_.info_log, "Log #%llu: ignoring %s",
-            (unsigned long long) log,
-            status.ToString().c_str());
+#endif
+          (unsigned long long)log, status.ToString().c_str());
         status = Status::OK();  // Keep going with rest of file
       }
     }
@@ -233,16 +245,17 @@ class Repairer {
         table_numbers_.push_back(meta.number);
       }
     }
+#ifdef WINDOWS
+    Log(options_.info_log, "Log #%I64u: %d ops saved to Table #%I64u %s",
+#else
     Log(options_.info_log, "Log #%llu: %d ops saved to Table #%llu %s",
-        (unsigned long long) log,
-        counter,
-        (unsigned long long) meta.number,
-        status.ToString().c_str());
+#endif
+      (unsigned long long)log, (int)counter,
+      (unsigned long long)meta.number, status.ToString().c_str());
     return status;
   }
 
   void ExtractMetaData() {
-    std::vector<TableInfo> kept;
     for (size_t i = 0; i < table_numbers_.size(); i++) {
       ScanTable(table_numbers_[i]);
     }
@@ -272,9 +285,12 @@ class Repairer {
     if (!status.ok()) {
       ArchiveFile(TableFileName(dbname_, number));
       ArchiveFile(SSTTableFileName(dbname_, number));
+#ifdef WINDOWS
+      Log(options_.info_log, "Table #%I64u: dropped: %s",
+#else
       Log(options_.info_log, "Table #%llu: dropped: %s",
-          (unsigned long long) t.meta.number,
-          status.ToString().c_str());
+#endif
+        (unsigned long long)t.meta.number, status.ToString().c_str());
       return;
     }
 
@@ -287,9 +303,12 @@ class Repairer {
     for (iter->SeekToFirst(); iter->Valid(); iter->Next()) {
       Slice key = iter->key();
       if (!ParseInternalKey(key, &parsed)) {
+#ifdef WINDOWS
+        Log(options_.info_log, "Table #%I64u: unparsable key %s",
+#else
         Log(options_.info_log, "Table #%llu: unparsable key %s",
-            (unsigned long long) t.meta.number,
-            EscapeString(key).c_str());
+#endif
+          (unsigned long long)t.meta.number, EscapeString(key).c_str());
         continue;
       }
 
@@ -307,10 +326,13 @@ class Repairer {
       status = iter->status();
     }
     delete iter;
+#ifdef WINDOWS
+    Log(options_.info_log, "Table #%I64u: %d entries %s",
+#else
     Log(options_.info_log, "Table #%llu: %d entries %s",
-        (unsigned long long) t.meta.number,
-        counter,
-        status.ToString().c_str());
+#endif
+      (unsigned long long)t.meta.number, (int)counter,
+      status.ToString().c_str());
 
     if (status.ok()) {
       tables_.push_back(t);
@@ -363,8 +385,12 @@ class Repairer {
       std::string orig = TableFileName(dbname_, t.meta.number);
       s = env_->RenameFile(copy, orig);
       if (s.ok()) {
+#ifdef WINDOWS
+        Log(options_.info_log, "Table #%I64u: %d entries repaired",
+#else
         Log(options_.info_log, "Table #%llu: %d entries repaired",
-            (unsigned long long) t.meta.number, counter);
+#endif
+          (unsigned long long)t.meta.number, (int)counter);
         tables_.push_back(t);
       }
     }

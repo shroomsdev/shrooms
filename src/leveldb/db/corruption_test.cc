@@ -36,7 +36,7 @@ class CorruptionTest {
     tiny_cache_ = NewLRUCache(100);
     options_.env = &env_;
     options_.block_cache = tiny_cache_;
-    dbname_ = test::TmpDir() + "/db_test";
+    dbname_ = test::TmpDir() + "/corruption_test";
     DestroyDB(dbname_, options_);
 
     db_ = NULL;
@@ -86,7 +86,7 @@ class CorruptionTest {
   }
 
   void Check(int min_expected, int max_expected) {
-    int next_expected = 0;
+    uint64_t next_expected = 0;
     int missed = 0;
     int bad_keys = 0;
     int bad_values = 0;

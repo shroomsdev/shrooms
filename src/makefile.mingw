@@ -24,14 +24,13 @@ LIBS= \
  -l boost_filesystem-mgw49-mt-s-1_55 \
  -l boost_program_options-mgw49-mt-s-1_55 \
  -l boost_thread-mgw49-mt-s-1_55 \
- -l boost_chrono-mgw49-mt-s-1_55 \
  -l db_cxx \
  -l ssl \
  -l crypto
 
-DEFS=-DWIN32 -D_WINDOWS -DBOOST_THREAD_USE_LIB -DBOOST_SPIRIT_THREADSAFE
+DEFS=-DWIN32 -D_WINDOWS -DBOOST_THREAD_USE_LIB -DBOOST_SPIRIT_THREADSAFE -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -D__USE_MINGW_ANSI_STDIO
 DEBUGFLAGS=-g
-CFLAGS=-mthreads -O3 -msse2 -w -Wall -Wextra -Wno-ignored-qualifiers -Wformat -Wformat-security -Wno-unused-parameter $(DEBUGFLAGS) $(DEFS) $(INCLUDEPATHS)
+CFLAGS=-mthreads -O3 -msse2 -w -Wall -Wextra -Wformat -Wformat-security -Wno-unused-parameter -std=c++11 $(DEBUGFLAGS) $(DEFS) $(INCLUDEPATHS)
 LDFLAGS=-Wl,--dynamicbase -Wl,--nxcompat -static
 
 TESTDEFS = -DTEST_DATA_DIR=$(abspath test/data)
@@ -52,16 +51,18 @@ LIBS += -l kernel32 -l user32 -l gdi32 -l comdlg32 -l winspool -l winmm -l shell
 HEADERS = $(wildcard *.h)
 
 OBJS= \
+    obj/leveldb.o \
     obj/alert.o \
     obj/version.o \
     obj/checkpoints.o \
     obj/netbase.o \
+    obj/ntp.o \
     obj/addrman.o \
     obj/crypter.o \
     obj/key.o \
     obj/db.o \
+    obj/txdb.o \
     obj/init.o \
-    obj/irc.o \
     obj/keystore.o \
     obj/main.o \
     obj/miner.o \
@@ -74,42 +75,33 @@ OBJS= \
     obj/rpcwallet.o \
     obj/rpcblockchain.o \
     obj/rpcrawtransaction.o \
+    obj/base58.o \
     obj/script.o \
     obj/sync.o \
     obj/util.o \
     obj/wallet.o \
     obj/walletdb.o \
+    obj/hash.o \
+    obj/sha2.o \
+    obj/ripemd160.o \
     obj/noui.o \
     obj/kernel.o \
     obj/pbkdf2.o \
     obj/scrypt.o \
     obj/scrypt-x86.o \
-    obj/scrypt-x86_64.o \
-    obj/zerocoin/Accumulator.o \
-    obj/zerocoin/AccumulatorProofOfKnowledge.o \
-    obj/zerocoin/Coin.o \
-    obj/zerocoin/CoinSpend.o \
-    obj/zerocoin/Commitment.o \
-    obj/zerocoin/ParamGeneration.o \
-    obj/zerocoin/Params.o \
-    obj/zerocoin/SerialNumberSignatureOfKnowledge.o \
-    obj/zerocoin/SpendMetaData.o \
-    obj/zerocoin/ZeroTest.o
+    obj/scrypt-x86_64.o
 
 all: SHROOMSd.exe
 
 LIBS += $(CURDIR)/leveldb/libleveldb.a $(CURDIR)/leveldb/libmemenv.a
 DEFS += $(addprefix -I,$(CURDIR)/leveldb/include)
 DEFS += $(addprefix -I,$(CURDIR)/leveldb/helpers)
-OBJS += obj/txdb-leveldb.o
+OBJS += obj/leveldb.o
 leveldb/libleveldb.a:
 	cd leveldb; make; cd ..
-obj/txdb-leveldb.o: leveldb/libleveldb.a
+obj/leveldb.o: leveldb/libleveldb.a
 
 obj/%.o: %.cpp $(HEADERS)
-	g++ -c $(CFLAGS) -o $@ $<
-
-obj/zerocoin/%.o: zerocoin/%.cpp
 	g++ -c $(CFLAGS) -o $@ $<
 
 obj/scrypt-x86.o: scrypt-x86.S
@@ -124,6 +116,5 @@ SHROOMSd.exe: $(OBJS:obj/%=obj/%)
 clean:
 	-del /Q SHROOMSd
 	-del /Q obj\*
-	-del /Q obj\zerocoin\*
 
 FORCE:

@@ -31,6 +31,7 @@
 #include "macdockiconhandler.h"
 #endif
 
+#include <QDebug>
 #include <QApplication>
 #include <QMainWindow>
 #include <QMenuBar>
@@ -77,8 +78,9 @@ BitcoinGUI::BitcoinGUI(QWidget *parent):
     rpcConsole(0),
     nWeight(0)
 {
+    updateStyle();
     resize(850, 550);
-    setWindowTitle(tr("SHROOMS") + " - " + tr("Wallet"));
+    setWindowTitle(tr("SHROOMS ") + QString::fromStdString(FormatFullVersion()));
 #ifndef Q_OS_MAC
     qApp->setWindowIcon(QIcon(":icons/bitcoin"));
     setWindowIcon(QIcon(":icons/bitcoin"));
@@ -217,13 +219,13 @@ void BitcoinGUI::createActions()
     overviewAction->setShortcut(QKeySequence(Qt::ALT + Qt::Key_1));
     tabGroup->addAction(overviewAction);
 
-    sendCoinsAction = new QAction(QIcon(":/icons/send"), tr("&Send coins"), this);
+    sendCoinsAction = new QAction(QIcon(":/icons/send"), tr("&Send shrooms"), this);
     sendCoinsAction->setToolTip(tr("Send coins to a SHROOMS address"));
     sendCoinsAction->setCheckable(true);
     sendCoinsAction->setShortcut(QKeySequence(Qt::ALT + Qt::Key_2));
     tabGroup->addAction(sendCoinsAction);
 
-    receiveCoinsAction = new QAction(QIcon(":/icons/receiving_addresses"), tr("&Receive coins"), this);
+    receiveCoinsAction = new QAction(QIcon(":/icons/receiving_addresses"), tr("&Receive shrooms"), this);
     receiveCoinsAction->setToolTip(tr("Show the list of addresses for receiving payments"));
     receiveCoinsAction->setCheckable(true);
     receiveCoinsAction->setShortcut(QKeySequence(Qt::ALT + Qt::Key_3));
@@ -336,7 +338,7 @@ void BitcoinGUI::createMenuBar()
 void BitcoinGUI::createToolBars()
 {
     QToolBar *toolbar = addToolBar(tr("Tabs toolbar"));
-    toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    toolbar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
     toolbar->addAction(overviewAction);
     toolbar->addAction(sendCoinsAction);
     toolbar->addAction(receiveCoinsAction);
@@ -942,7 +944,12 @@ void BitcoinGUI::updateStakingIcon()
     if (nLastCoinStakeSearchInterval && nWeight)
     {
         uint64_t nNetworkWeight = GetPoSKernelPS();
-        unsigned nEstimateTime = nTargetSpacing * nNetworkWeight / nWeight;
+
+        unsigned nEstimateTime = 0;
+        if(GetAdjustedTime() > FORK_TIME)
+            nEstimateTime = nTargetSpacing2 * nNetworkWeight / nWeight;
+        else
+            nEstimateTime = nTargetSpacing * nNetworkWeight / nWeight;
 
         QString text;
         if (nEstimateTime < 60)
@@ -979,4 +986,43 @@ void BitcoinGUI::updateStakingIcon()
         else
             labelStakingIcon->setToolTip(tr("Not staking"));
     }
+}
+
+void BitcoinGUI::updateStyleSlot()
+{
+    updateStyle();
+}
+
+void BitcoinGUI::updateStyle()
+{
+    if (!fUseShroomsTheme)
+        return;
+
+    QString qssPath = QString::fromStdString( GetDataDir().string() ) + "/shrooms.qss";
+
+    QFile f( qssPath );
+
+    if (!f.exists())
+        writeDefaultStyleSheet( qssPath );
+
+    if (!f.open(QFile::ReadOnly))
+    {
+        qDebug() << "failed to open style sheet";
+        return;
+    }
+
+    qDebug() << "loading theme";
+    qApp->setStyleSheet( f.readAll() );
+}
+
+void BitcoinGUI::writeDefaultStyleSheet(const QString &qssPath)
+{
+    qDebug() << "writing default style sheet";
+
+    QFile qss( ":/text/stylesheet" );
+    qss.open( QFile::ReadOnly );
+
+    QFile f( qssPath );
+    f.open( QFile::ReadWrite );
+    f.write( qss.readAll() );
 }

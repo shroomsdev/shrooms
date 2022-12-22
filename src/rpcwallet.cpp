@@ -7,7 +7,12 @@
 #include "walletdb.h"
 #include "bitcoinrpc.h"
 #include "init.h"
+#include "main.h"
+#include "util.h"
+#include "ntp.h"
 #include "base58.h"
+
+#include <sstream>
 
 using namespace json_spirit;
 using namespace std;
@@ -59,7 +64,7 @@ void WalletTxToJSON(const CWalletTx& wtx, Object& entry)
     entry.push_back(Pair("txid", wtx.GetHash().GetHex()));
     entry.push_back(Pair("time", (int64_t)wtx.GetTxTime()));
     entry.push_back(Pair("timereceived", (int64_t)wtx.nTimeReceived));
-    BOOST_FOREACH(const PAIRTYPE(string,string)& item, wtx.mapValue)
+    for (const PAIRTYPE(string,string)& item : wtx.mapValue)
         entry.push_back(Pair(item.first, item.second));
 }
 
@@ -81,23 +86,31 @@ Value getinfo(const Array& params, bool fHelp)
     proxyType proxy;
     GetProxy(NET_IPV4, proxy);
 
-    Object obj, diff;
+    Object obj, diff, timestamping;
     obj.push_back(Pair("version",       FormatFullVersion()));
     obj.push_back(Pair("protocolversion",(int)PROTOCOL_VERSION));
     obj.push_back(Pair("walletversion", pwalletMain->GetVersion()));
     obj.push_back(Pair("balance",       ValueFromAmount(pwalletMain->GetBalance())));
-    obj.push_back(Pair("newmint",       ValueFromAmount(pwalletMain->GetNewMint())));
     obj.push_back(Pair("stake",         ValueFromAmount(pwalletMain->GetStake())));
     obj.push_back(Pair("blocks",        (int)nBestHeight));
-    obj.push_back(Pair("timeoffset",    (int64_t)GetTimeOffset()));
+
+    timestamping.push_back(Pair("systemclock", GetTime()));
+    timestamping.push_back(Pair("adjustedtime", GetAdjustedTime()));
+
+    int64_t nNtpOffset = GetNtpOffset(),
+            nP2POffset = GetNodesOffset();
+
+    timestamping.push_back(Pair("ntpoffset", nNtpOffset != INT64_MAX ? nNtpOffset : Value::null));
+    timestamping.push_back(Pair("p2poffset", nP2POffset != INT64_MAX ? nP2POffset : Value::null));
+
+    obj.push_back(Pair("timestamping", timestamping));
+	
     obj.push_back(Pair("moneysupply",   ValueFromAmount(pindexBest->nMoneySupply)));
     obj.push_back(Pair("connections",   (int)vNodes.size()));
     obj.push_back(Pair("proxy",         (proxy.first.IsValid() ? proxy.first.ToStringIPPort() : string())));
     obj.push_back(Pair("ip",            addrSeenByPeer.ToStringIP()));
 
-    diff.push_back(Pair("proof-of-work",  GetDifficulty()));
-    diff.push_back(Pair("proof-of-stake", GetDifficulty(GetLastBlockIndex(pindexBest, true))));
-    obj.push_back(Pair("difficulty",    diff));
+    obj.push_back(Pair("difficulty",    GetDifficulty(GetLastBlockIndex(pindexBest, true))));
 
     obj.push_back(Pair("testnet",       fTestNet));
     obj.push_back(Pair("keypoololdest", (int64_t)pwalletMain->GetOldestKeyPoolTime()));
@@ -107,6 +120,7 @@ Value getinfo(const Array& params, bool fHelp)
     if (pwalletMain->IsCrypted())
         obj.push_back(Pair("unlocked_until", (int64_t)nWalletUnlockTime / 1000));
     obj.push_back(Pair("errors",        GetWarnings("statusbar")));
+    obj.push_back(Pair("updates",    "http://shrooms.pw"));
     return obj;
 }
 
@@ -187,7 +201,7 @@ CBitcoinAddress GetAccountAddress(string strAccount, bool bForceNew=false)
              ++it)
         {
             const CWalletTx& wtx = (*it).second;
-            BOOST_FOREACH(const CTxOut& txout, wtx.vout)
+            for (const CTxOut& txout : wtx.vout)
                 if (txout.scriptPubKey == scriptPubKey)
                     bKeyUsed = true;
         }
@@ -285,7 +299,7 @@ Value getaddressesbyaccount(const Array& params, bool fHelp)
 
     // Find all addresses that have the given account
     Array ret;
-    BOOST_FOREACH(const PAIRTYPE(CBitcoinAddress, string)& item, pwalletMain->mapAddressBook)
+    for (const PAIRTYPE(CBitcoinAddress, string)& item : pwalletMain->mapAddressBook)
     {
         const CBitcoinAddress& address = item.first;
         const string& strName = item.second;
@@ -338,10 +352,10 @@ Value listaddressgroupings(const Array& params, bool fHelp)
 
     Array jsonGroupings;
     map<CTxDestination, int64_t> balances = pwalletMain->GetAddressBalances();
-    BOOST_FOREACH(set<CTxDestination> grouping, pwalletMain->GetAddressGroupings())
+    for (set<CTxDestination> grouping : pwalletMain->GetAddressGroupings())
     {
         Array jsonGrouping;
-        BOOST_FOREACH(CTxDestination address, grouping)
+        for (CTxDestination address : grouping)
         {
             Array addressInfo;
             addressInfo.push_back(CBitcoinAddress(address).ToString());
@@ -459,7 +473,7 @@ Value getreceivedbyaddress(const Array& params, bool fHelp)
         if (wtx.IsCoinBase() || wtx.IsCoinStake() || !wtx.IsFinal())
             continue;
 
-        BOOST_FOREACH(const CTxOut& txout, wtx.vout)
+        for (const CTxOut& txout : wtx.vout)
             if (txout.scriptPubKey == scriptPubKey)
                 if (wtx.GetDepthInMainChain() >= nMinDepth)
                     nAmount += txout.nValue;
@@ -471,7 +485,7 @@ Value getreceivedbyaddress(const Array& params, bool fHelp)
 
 void GetAccountAddresses(string strAccount, set<CTxDestination>& setAddress)
 {
-    BOOST_FOREACH(const PAIRTYPE(CTxDestination, string)& item, pwalletMain->mapAddressBook)
+    for (const PAIRTYPE(CTxDestination, string)& item : pwalletMain->mapAddressBook)
     {
         const CTxDestination& address = item.first;
         const string& strName = item.second;
@@ -507,7 +521,7 @@ Value getreceivedbyaccount(const Array& params, bool fHelp)
         if (wtx.IsCoinBase() || wtx.IsCoinStake() || !wtx.IsFinal())
             continue;
 
-        BOOST_FOREACH(const CTxOut& txout, wtx.vout)
+        for (const CTxOut& txout : wtx.vout)
         {
             CTxDestination address;
             if (ExtractDestination(txout.scriptPubKey, address) && IsMine(*pwalletMain, address) && setAddress.count(address))
@@ -585,10 +599,10 @@ Value getbalance(const Array& params, bool fHelp)
             wtx.GetAmounts(listReceived, listSent, allFee, strSentAccount);
             if (wtx.GetDepthInMainChain() >= nMinDepth && wtx.GetBlocksToMaturity() == 0)
             {
-                BOOST_FOREACH(const PAIRTYPE(CTxDestination,int64_t)& r, listReceived)
+                for (const PAIRTYPE(CTxDestination,int64_t)& r : listReceived)
                     nBalance += r.second;
             }
-            BOOST_FOREACH(const PAIRTYPE(CTxDestination,int64_t)& r, listSent)
+            for (const PAIRTYPE(CTxDestination,int64_t)& r : listSent)
                 nBalance -= r.second;
             nBalance -= allFee;
         }
@@ -722,7 +736,7 @@ Value sendmany(const Array& params, bool fHelp)
     vector<pair<CScript, int64_t> > vecSend;
 
     int64_t totalAmount = 0;
-    BOOST_FOREACH(const Pair& s, sendTo)
+    for (const Pair& s : sendTo)
     {
         CBitcoinAddress address(s.name_);
         if (!address.IsValid())
@@ -751,7 +765,7 @@ Value sendmany(const Array& params, bool fHelp)
     // Send
     CReserveKey keyChange(pwalletMain);
     int64_t nFeeRequired = 0;
-    bool fCreated = pwalletMain->CreateTransaction(vecSend, wtx, keyChange, nFeeRequired);
+    bool fCreated = pwalletMain->CreateTransaction(vecSend, wtx, keyChange, nFeeRequired, 1);
     if (!fCreated)
     {
         if (totalAmount + nFeeRequired > pwalletMain->GetBalance())
@@ -787,7 +801,7 @@ Value addmultisigaddress(const Array& params, bool fHelp)
     if ((int)keys.size() < nRequired)
         throw runtime_error(
             strprintf("not enough keys supplied "
-                      "(got %"PRIszu" keys, but need at least %d to redeem)", keys.size(), nRequired));
+                      "(got %" PRIszu " keys, but need at least %d to redeem)", keys.size(), nRequired));
     std::vector<CKey> pubkeys;
     pubkeys.resize(keys.size());
     for (unsigned int i = 0; i < keys.size(); i++)
@@ -895,7 +909,7 @@ Value ListReceived(const Array& params, bool fByAccounts)
         if (nDepth < nMinDepth)
             continue;
 
-        BOOST_FOREACH(const CTxOut& txout, wtx.vout)
+        for (const CTxOut& txout : wtx.vout)
         {
             CTxDestination address;
             if (!ExtractDestination(txout.scriptPubKey, address) || !IsMine(*pwalletMain, address))
@@ -910,7 +924,7 @@ Value ListReceived(const Array& params, bool fByAccounts)
     // Reply
     Array ret;
     map<string, tallyitem> mapAccountTally;
-    BOOST_FOREACH(const PAIRTYPE(CBitcoinAddress, string)& item, pwalletMain->mapAddressBook)
+    for (const PAIRTYPE(CBitcoinAddress, string)& item : pwalletMain->mapAddressBook)
     {
         const CBitcoinAddress& address = item.first;
         const string& strAccount = item.second;
@@ -1014,7 +1028,7 @@ void ListTransactions(const CWalletTx& wtx, const string& strAccount, int nMinDe
     // Sent
     if ((!wtx.IsCoinStake()) && (!listSent.empty() || nFee != 0) && (fAllAccounts || strAccount == strSentAccount))
     {
-        BOOST_FOREACH(const PAIRTYPE(CTxDestination, int64_t)& s, listSent)
+        for (const PAIRTYPE(CTxDestination, int64_t)& s : listSent)
         {
             Object entry;
             entry.push_back(Pair("account", strSentAccount));
@@ -1032,7 +1046,7 @@ void ListTransactions(const CWalletTx& wtx, const string& strAccount, int nMinDe
     if (listReceived.size() > 0 && wtx.GetDepthInMainChain() >= nMinDepth)
     {
         bool stop = false;
-        BOOST_FOREACH(const PAIRTYPE(CTxDestination, int64_t)& r, listReceived)
+        for (const PAIRTYPE(CTxDestination, int64_t)& r : listReceived)
         {
             string account;
             if (pwalletMain->mapAddressBook.count(r.first))
@@ -1161,7 +1175,7 @@ Value listaccounts(const Array& params, bool fHelp)
         nMinDepth = params[0].get_int();
 
     map<string, int64_t> mapAccountBalances;
-    BOOST_FOREACH(const PAIRTYPE(CTxDestination, string)& entry, pwalletMain->mapAddressBook) {
+    for (const PAIRTYPE(CTxDestination, string)& entry : pwalletMain->mapAddressBook) {
         if (IsMine(*pwalletMain, entry.first)) // This address belongs to me
             mapAccountBalances[entry.second] = 0;
     }
@@ -1178,11 +1192,11 @@ Value listaccounts(const Array& params, bool fHelp)
             continue;
         wtx.GetAmounts(listReceived, listSent, nFee, strSentAccount);
         mapAccountBalances[strSentAccount] -= nFee;
-        BOOST_FOREACH(const PAIRTYPE(CTxDestination, int64_t)& s, listSent)
+        for (const PAIRTYPE(CTxDestination, int64_t)& s : listSent)
             mapAccountBalances[strSentAccount] -= s.second;
         if (nDepth >= nMinDepth && wtx.GetBlocksToMaturity() == 0)
         {
-            BOOST_FOREACH(const PAIRTYPE(CTxDestination, int64_t)& r, listReceived)
+            for (const PAIRTYPE(CTxDestination, int64_t)& r : listReceived)
                 if (pwalletMain->mapAddressBook.count(r.first))
                     mapAccountBalances[pwalletMain->mapAddressBook[r.first]] += r.second;
                 else
@@ -1192,11 +1206,11 @@ Value listaccounts(const Array& params, bool fHelp)
 
     list<CAccountingEntry> acentries;
     CWalletDB(pwalletMain->strWalletFile).ListAccountCreditDebit("*", acentries);
-    BOOST_FOREACH(const CAccountingEntry& entry, acentries)
+    for (const CAccountingEntry& entry : acentries)
         mapAccountBalances[entry.strAccount] += entry.nCreditDebit;
 
     Object ret;
-    BOOST_FOREACH(const PAIRTYPE(string, int64_t)& accountBalance, mapAccountBalances) {
+    for (const PAIRTYPE(string, int64_t)& accountBalance : mapAccountBalances) {
         ret.push_back(Pair(accountBalance.first, ValueFromAmount(accountBalance.second)));
     }
     return ret;
@@ -1302,7 +1316,7 @@ Value gettransaction(const Array& params, bool fHelp)
     {
         CTransaction tx;
         uint256 hashBlock = 0;
-        if (GetTransaction(hash, tx, hashBlock))
+        if (GetTransaction(hash, tx, hashBlock, true))
         {
             TxToJSON(tx, 0, entry);
             if (hashBlock == 0)
@@ -1565,7 +1579,7 @@ public:
         CPubKey vchPubKey;
         pwalletMain->GetPubKey(keyID, vchPubKey);
         obj.push_back(Pair("isscript", false));
-        obj.push_back(Pair("pubkey", HexStr(vchPubKey.Raw())));
+        obj.push_back(Pair("pubkey", HexStr(vchPubKey)));
         obj.push_back(Pair("iscompressed", vchPubKey.IsCompressed()));
         return obj;
     }
@@ -1582,7 +1596,7 @@ public:
         obj.push_back(Pair("script", GetTxnOutputType(whichType)));
         obj.push_back(Pair("hex", HexStr(subscript.begin(), subscript.end())));
         Array a;
-        BOOST_FOREACH(const CTxDestination& addr, addresses)
+        for (const CTxDestination& addr : addresses)
             a.push_back(CBitcoinAddress(addr).ToString());
         obj.push_back(Pair("addresses", a));
         if (whichType == TX_MULTISIG)
@@ -1777,3 +1791,148 @@ Value makekeypair(const Array& params, bool fHelp)
     result.push_back(Pair("PublicKey", HexStr(key.GetPubKey().Raw())));
     return result;
 }
+
+Value combinedust(const Array& params, bool fHelp)
+{
+    if (fHelp || params.size() > 1)
+        throw runtime_error(
+			"combinedust <true/false>\n"
+			"Combine dust is a setting in the staking parameters that will iterate through your entire wallet contents to looks for small coins that it can combine into your coinstake transaction." 
+			"set this to false to prevent any combination from occurring \n");
+    if(params.size() < 1)
+        return pwalletMain->fCombineDust;
+	
+    CWalletDB walletdb(pwalletMain->strWalletFile);
+
+		bool fCombineDust;
+		string strCombineDust = params[0].get_str();
+		if(strCombineDust == "true")
+			fCombineDust = true;
+		else if(strCombineDust == "false")
+			fCombineDust = false;
+		else
+        return "Failed to understand true/false parameter. Please use combinedust true/false.\n"
+		"Combine dust is a setting in the staking parameters that will iterate through your entire wallet contents to looks for small coins that it can combine into your coinstake transaction." 
+		"set this to false to prevent any combination from occurring \n";
+		
+		pwalletMain->fCombineDust = fCombineDust;
+		if(walletdb.WriteCombineDust(fCombineDust))
+			return "Combine dust setting saved and written to DB";
+		else
+			return "ERROR: Combine dust setting failed to write to DB";
+}
+
+double GetMoneySupply(int nHeight)
+{
+	CBlockIndex* pindex = FindBlockByHeight(nHeight);
+	double nSupply = pindex->nMoneySupply;	
+	return nSupply / COIN;	
+}
+double GetSupplyChange(int nHeight, int pHeight)
+{
+	double nSupply = GetMoneySupply(nHeight); //present supply
+	double pSupply = GetMoneySupply(pHeight); //previous supply
+	double nChange = nSupply - pSupply; //difference
+	return nChange;
+}
+double GetBlockSpeed(int nHeight, int pHeight)
+{
+	CBlockIndex* pIndex = FindBlockByHeight(nHeight);
+	CBlockIndex* ppIndex = FindBlockByHeight(pHeight);
+	double nTime = pIndex->nTime;
+	double pTime = ppIndex->nTime;
+	double nTimeChange = (nTime - pTime) / 60 / 60 / 24; //in days
+	return nTimeChange;
+}
+double GetRate(int nHeight, int pHeight)
+{
+	double nSupplyChange = GetSupplyChange(nHeight, pHeight);
+	double nTimeChange = GetBlockSpeed(nHeight, pHeight);
+	double nMoneySupply = GetMoneySupply(nHeight);
+	double nRate = nSupplyChange / nMoneySupply / nTimeChange;
+	
+	return nRate;
+}
+double PredictFutureSupply(int nHeight, int pHeight, int nDays)
+{
+	double nRate = GetRate(nHeight, pHeight);
+	double nSupply = GetMoneySupply(nHeight);
+	double fSupply = nSupply * pow( 1 + nRate, nDays ); //compounds daily
+	
+	return fSupply;
+}
+
+Value getmoneysupply(const Array& params, bool fHelp)
+{
+    if (fHelp || params.size() > 1)
+        throw runtime_error(
+            "getmoneysupply [height]\n"
+            "Returns SHROOMS supply at certain block, current SHROOMS supply as default");
+	
+    GetLastBlockIndex(pindexBest, false);
+	int nHeight = 0;
+	double nMoneySupply = 0;
+	
+    if (params.size() > 0)
+	{
+		nHeight = pindexBest->nHeight;
+		int pHeight = params[0].get_int();
+		if (pHeight > nHeight || pHeight < 0)
+			nMoneySupply = 0;
+		else
+			nMoneySupply = GetMoneySupply(pHeight);
+	}
+	else
+	{
+		nHeight = pindexBest->nHeight;
+		nMoneySupply = GetMoneySupply(nHeight);
+	}	
+	Object obj;
+	obj.push_back(Pair("SHROOMS supply", nMoneySupply));
+    return obj;
+}
+
+//SHROOMS Supply Information
+Value shroomssupply(const Array& params, bool fHelp)
+{
+	if (fHelp || params.size() != 0)
+        throw runtime_error(
+            "shroomssupply\n"
+            "Show important SHROOMS supply variables.\n");
+	
+	// grab block index of last block
+	GetLastBlockIndex(pindexBest, false);
+	
+	//height of blocks
+	int64_t nHeight = pindexBest->nHeight; //present
+	int64_t n1Height = nHeight - 720; // day -- 720 blocks should be about 1 day if blocks have 120 sec spacing
+	int64_t n7Height = nHeight - 720 * 7; // week
+	int64_t n30Height = nHeight - 720 * 30; // month
+	
+	//print to console
+	Object obj;
+	obj.push_back(Pair("SHROOMS supply - present", GetMoneySupply(nHeight)));
+	obj.push_back(Pair("------------------------------", "------------------------------"));
+	obj.push_back(Pair("SHROOMS supply - 720 blocks ago", GetMoneySupply(n1Height)));
+	obj.push_back(Pair("SHROOMS supply - 5040 blocks ago", GetMoneySupply(n7Height)));
+	obj.push_back(Pair("SHROOMS supply - 21600 blocks ago", GetMoneySupply(n30Height)));
+	obj.push_back(Pair("------------------------------", "------------------------------"));
+	obj.push_back(Pair("SHROOMS germinated(last 720 blocks)", GetSupplyChange(nHeight, n1Height)));
+	obj.push_back(Pair("SHROOMS germinated(last 5040 blocks)", GetSupplyChange(nHeight, n7Height)));
+	obj.push_back(Pair("SHROOMS germinated(last 21600 blocks)", GetSupplyChange(nHeight, n30Height)));
+	obj.push_back(Pair("------------------------------", "------------------------------"));
+	obj.push_back(Pair("time change over 720 blocks, days", GetBlockSpeed(nHeight, n1Height)));
+	obj.push_back(Pair("time change over 5040 blocks, days", GetBlockSpeed(nHeight, n7Height)));
+	obj.push_back(Pair("time change over 21600 blocks, days", GetBlockSpeed(nHeight, n30Height)));
+	obj.push_back(Pair("------------------------------", "------------------------------"));
+	obj.push_back(Pair("avg daily growth rate (last 720 blocks)", GetRate(nHeight, n1Height)));
+	obj.push_back(Pair("avg daily growth rate (last 5040 blocks)", GetRate(nHeight, n7Height)));
+	obj.push_back(Pair("avg daily growth rate (last 21600 blocks)", GetRate(nHeight, n30Height)));
+	obj.push_back(Pair("------------------------------", "------------------------------"));
+	obj.push_back(Pair("projected SHROOMS supply 1 day from now (daily compound)", PredictFutureSupply(nHeight, n1Height, 1)));
+	obj.push_back(Pair("projected SHROOMS supply 7 days from now (daily compound)", PredictFutureSupply(nHeight, n7Height, 7)));
+	obj.push_back(Pair("projected SHROOMS supply 30 days from now (daily compound)", PredictFutureSupply(nHeight, n30Height, 30)));
+
+	return obj;
+}
+

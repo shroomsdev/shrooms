@@ -7,7 +7,6 @@
 
 #include <deque>
 #include <boost/array.hpp>
-#include <boost/foreach.hpp>
 #include <openssl/rand.h>
 
 #ifndef WIN32
@@ -18,6 +17,7 @@
 #include "netbase.h"
 #include "protocol.h"
 #include "addrman.h"
+#include "hash.h"
 
 class CRequestTracker;
 class CNode;
@@ -49,7 +49,6 @@ enum
     LOCAL_IF,     // address a local interface listens on
     LOCAL_BIND,   // address explicit bound to
     LOCAL_UPNP,   // address reported by UPnP
-    LOCAL_IRC,    // address reported by IRC (deprecated)
     LOCAL_HTTP,   // address reported by whatismyip.com and similar
     LOCAL_MANUAL, // address explicitly specified (-externalip=)
 
@@ -107,12 +106,14 @@ enum threadId
     THREAD_DUMPADDRESS,
     THREAD_RPCHANDLER,
     THREAD_STAKE_MINER,
+    THREAD_NTP,
 
     THREAD_MAX
 };
 
 extern bool fClient;
 extern bool fDiscover;
+extern bool fListen;
 extern bool fUseUPnP;
 extern uint64_t nLocalServices;
 extern uint64_t nLocalHostNonce;
@@ -311,7 +312,7 @@ public:
     unsigned int GetTotalRecvSize()
     {
         unsigned int total = 0;
-        BOOST_FOREACH(const CNetMessage &msg, vRecvMsg) 
+        for (const CNetMessage &msg : vRecvMsg) 
             total += msg.vRecv.size() + 24;
         return total;
     }
@@ -323,7 +324,7 @@ public:
     void SetRecvVersion(int nVersionIn)
     {
         nRecvVersion = nVersionIn;
-        BOOST_FOREACH(CNetMessage &msg, vRecvMsg)
+        for (CNetMessage &msg : vRecvMsg)
             msg.SetVersion(nVersionIn);
     }
 
@@ -378,7 +379,7 @@ public:
         // the key is the earliest time the request can be sent
         int64_t& nRequestTime = mapAlreadyAskedFor[inv];
         if (fDebugNet)
-            printf("askfor %s   %"PRId64" (%s)\n", inv.ToString().c_str(), nRequestTime, DateTimeStrFormat("%H:%M:%S", nRequestTime/1000000).c_str());
+            printf("askfor %s   %" PRId64 " (%s)\n", inv.ToString().c_str(), nRequestTime, DateTimeStrFormat("%H:%M:%S", nRequestTime/1000000).c_str());
 
         // Make sure not to reuse time indexes to keep things in the same order
         int64_t nNow = (GetTime() - 1) * 1000000;
@@ -692,7 +693,7 @@ inline void RelayInventory(const CInv& inv)
     // Put on lists to offer to the other nodes
     {
         LOCK(cs_vNodes);
-        BOOST_FOREACH(CNode* pnode, vNodes)
+        for (CNode* pnode : vNodes)
             pnode->PushInventory(inv);
     }
 }

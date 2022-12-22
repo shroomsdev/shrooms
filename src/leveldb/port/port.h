@@ -12,10 +12,8 @@
 // of what the new port_<platform>.h file must provide.
 #if defined(LEVELDB_PLATFORM_POSIX)
 #  include "port/port_posix.h"
-#elif defined(LEVELDB_PLATFORM_CHROMIUM)
-#  include "port/port_chromium.h"
 #elif defined(LEVELDB_PLATFORM_WINDOWS)
-#  include "port/port_win.h"
+#  include "port/port_windows.h"
 #endif
 
 #endif  // STORAGE_LEVELDB_PORT_PORT_H_

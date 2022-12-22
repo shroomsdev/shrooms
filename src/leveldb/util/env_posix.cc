@@ -1,10 +1,9 @@
 // Copyright (c) 2011 The LevelDB Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
-#if !defined(LEVELDB_PLATFORM_WINDOWS)
 
-#include <deque>
-#include <set>
+#ifdef LEVELDB_PLATFORM_POSIX
+
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -13,28 +12,84 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
-#if defined(LEVELDB_PLATFORM_ANDROID)
-#include <sys/stat.h>
-#endif
+#include <deque>
+#include <limits>
+#include <set>
 #include "leveldb/env.h"
 #include "leveldb/slice.h"
 #include "port/port.h"
 #include "util/logging.h"
 #include "util/mutexlock.h"
 #include "util/posix_logger.h"
+#include "util/env_posix_test_helper.h"
 
 namespace leveldb {
 
 namespace {
 
+static int open_read_only_file_limit = -1;
+static int mmap_limit = -1;
+
 static Status IOError(const std::string& context, int err_number) {
   return Status::IOError(context, strerror(err_number));
 }
+
+// Helper class to limit resource usage to avoid exhaustion.
+// Currently used to limit read-only file descriptors and mmap file usage
+// so that we do not end up running out of file descriptors, virtual memory,
+// or running into kernel performance problems for very large databases.
+class Limiter {
+ public:
+  // Limit maximum number of resources to |n|.
+  Limiter(intptr_t n) {
+    SetAllowed(n);
+  }
+
+  // If another resource is available, acquire it and return true.
+  // Else return false.
+  bool Acquire() {
+    if (GetAllowed() <= 0) {
+      return false;
+    }
+    MutexLock l(&mu_);
+    intptr_t x = GetAllowed();
+    if (x <= 0) {
+      return false;
+    } else {
+      SetAllowed(x - 1);
+      return true;
+    }
+  }
+
+  // Release a resource acquired by a previous call to Acquire() that returned
+  // true.
+  void Release() {
+    MutexLock l(&mu_);
+    SetAllowed(GetAllowed() + 1);
+  }
+
+ private:
+  port::Mutex mu_;
+  port::AtomicPointer allowed_;
+
+  intptr_t GetAllowed() const {
+    return reinterpret_cast<intptr_t>(allowed_.Acquire_Load());
+  }
+
+  // REQUIRES: mu_ must be held
+  void SetAllowed(intptr_t v) {
+    allowed_.Release_Store(reinterpret_cast<void*>(v));
+  }
+
+  Limiter(const Limiter&);
+  void operator=(const Limiter&);
+};
 
 class PosixSequentialFile: public SequentialFile {
  private:
@@ -48,7 +103,7 @@ class PosixSequentialFile: public SequentialFile {
 
   virtual Status Read(size_t n, Slice* result, char* scratch) {
     Status s;
-    size_t r = fread_unlocked(scratch, 1, n, file_);
+    size_t r = fread(scratch, 1, n, file_);
     *result = Slice(scratch, r);
     if (r < n) {
       if (feof(file_)) {
@@ -73,73 +128,51 @@ class PosixSequentialFile: public SequentialFile {
 class PosixRandomAccessFile: public RandomAccessFile {
  private:
   std::string filename_;
+  bool temporary_fd_;  // If true, fd_ is -1 and we open on every read.
   int fd_;
+  Limiter* limiter_;
 
  public:
-  PosixRandomAccessFile(const std::string& fname, int fd)
-      : filename_(fname), fd_(fd) { }
-  virtual ~PosixRandomAccessFile() { close(fd_); }
+  PosixRandomAccessFile(const std::string& fname, int fd, Limiter* limiter)
+      : filename_(fname), fd_(fd), limiter_(limiter) {
+    temporary_fd_ = !limiter->Acquire();
+    if (temporary_fd_) {
+      // Open file on every access.
+      close(fd_);
+      fd_ = -1;
+    }
+  }
+
+  virtual ~PosixRandomAccessFile() {
+    if (!temporary_fd_) {
+      close(fd_);
+      limiter_->Release();
+    }
+  }
 
   virtual Status Read(uint64_t offset, size_t n, Slice* result,
                       char* scratch) const {
+    int fd = fd_;
+    if (temporary_fd_) {
+      fd = open(filename_.c_str(), O_RDONLY);
+      if (fd < 0) {
+        return IOError(filename_, errno);
+      }
+    }
+
     Status s;
-    ssize_t r = pread(fd_, scratch, n, static_cast<off_t>(offset));
+    ssize_t r = pread(fd, scratch, n, static_cast<off_t>(offset));
     *result = Slice(scratch, (r < 0) ? 0 : r);
     if (r < 0) {
       // An error: return a non-ok status
       s = IOError(filename_, errno);
     }
+    if (temporary_fd_) {
+      // Close the temporary file descriptor opened earlier.
+      close(fd);
+    }
     return s;
   }
-};
-
-// Helper class to limit mmap file usage so that we do not end up
-// running out virtual memory or running into kernel performance
-// problems for very large databases.
-class MmapLimiter {
- public:
-  // Up to 1000 mmaps for 64-bit binaries; none for smaller pointer sizes.
-  MmapLimiter() {
-    SetAllowed(sizeof(void*) >= 8 ? 1000 : 0);
-  }
-
-  // If another mmap slot is available, acquire it and return true.
-  // Else return false.
-  bool Acquire() {
-    if (GetAllowed() <= 0) {
-      return false;
-    }
-    MutexLock l(&mu_);
-    intptr_t x = GetAllowed();
-    if (x <= 0) {
-      return false;
-    } else {
-      SetAllowed(x - 1);
-      return true;
-    }
-  }
-
-  // Release a slot acquired by a previous call to Acquire() that returned true.
-  void Release() {
-    MutexLock l(&mu_);
-    SetAllowed(GetAllowed() + 1);
-  }
-
- private:
-  port::Mutex mu_;
-  port::AtomicPointer allowed_;
-
-  intptr_t GetAllowed() const {
-    return reinterpret_cast<intptr_t>(allowed_.Acquire_Load());
-  }
-
-  // REQUIRES: mu_ must be held
-  void SetAllowed(intptr_t v) {
-    allowed_.Release_Store(reinterpret_cast<void*>(v));
-  }
-
-  MmapLimiter(const MmapLimiter&);
-  void operator=(const MmapLimiter&);
 };
 
 // mmap() based random-access
@@ -148,12 +181,12 @@ class PosixMmapReadableFile: public RandomAccessFile {
   std::string filename_;
   void* mmapped_region_;
   size_t length_;
-  MmapLimiter* limiter_;
+  Limiter* limiter_;
 
  public:
   // base[0,length-1] contains the mmapped contents of the file.
   PosixMmapReadableFile(const std::string& fname, void* base, size_t length,
-                        MmapLimiter* limiter)
+                        Limiter* limiter)
       : filename_(fname), mmapped_region_(base), length_(length),
         limiter_(limiter) {
   }
@@ -177,84 +210,117 @@ class PosixMmapReadableFile: public RandomAccessFile {
 };
 
 class PosixWritableFile : public WritableFile {
- private:
-  std::string filename_;
-  FILE* file_;
+private:
+    std::string filename_;
+    FILE *file_;
 
- public:
-  PosixWritableFile(const std::string& fname, FILE* f)
+    /* Fail safe flush of all data associated with a file descriptor provided */
+    static Status SyncFd(int fd, const std::string &fd_path) {
+        int ret;
+
+#if (__linux__)
+        ret = fdatasync(fd);
+#elif (__APPLE__) && (F_FULLFSYNC)
+        /* fcntl() with F_FULLFSYNC means fsync() with device flush to medium;
+         * works with HFS only as of 10.4, so fail over to fsync() */
+        ret = fcntl(fd, F_FULLFSYNC, 0);
+        if(ret) ret = fsync(fd);
+#else
+        ret = fsync(fd);
+#endif
+
+        if(!ret) return(Status::OK());
+
+        return(IOError(fd_path, errno));
+    }
+
+    Status SyncDirIfManifest() {
+        const char *f = filename_.c_str();
+        const char *sep = strrchr(f, '/');
+        Slice basename;
+        std::string dir;
+
+        if(!sep) {
+            dir = ".";
+            basename = f;
+        } else {
+            dir = std::string(f, sep - f);
+            basename = sep + 1;
+        }
+
+        int fd;
+        Status s;
+        if(basename.starts_with("MANIFEST")) {
+            fd = open(dir.c_str(), O_RDONLY);
+            if(fd < 0) {
+                s = IOError(dir, errno);
+            } else {
+                s = SyncFd(fd, dir);
+                close(fd);
+            }
+        }
+        return(s);
+    }
+
+public:
+    PosixWritableFile(const std::string &fname, FILE *f)
       : filename_(fname), file_(f) { }
 
-  ~PosixWritableFile() {
-    if (file_ != NULL) {
-      // Ignoring any potential errors
-      fclose(file_);
+    ~PosixWritableFile() {
+        if(file_ != NULL) fclose(file_);
     }
-  }
 
-  virtual Status Append(const Slice& data) {
-    size_t r = fwrite_unlocked(data.data(), 1, data.size(), file_);
-    if (r != data.size()) {
-      return IOError(filename_, errno);
-    }
-    return Status::OK();
-  }
+    virtual Status Append(const Slice &data) {
+        size_t ret;
 
-  virtual Status Close() {
-    Status result;
-    if (fclose(file_) != 0) {
-      result = IOError(filename_, errno);
-    }
-    file_ = NULL;
-    return result;
-  }
+        /* Don't use buffered or thread unsafe write */
+        ret = fwrite(data.data(), 1, data.size(), file_);
 
-  virtual Status Flush() {
-    if (fflush_unlocked(file_) != 0) {
-      return IOError(filename_, errno);
-    }
-    return Status::OK();
-  }
-
-  Status SyncDirIfManifest() {
-    const char* f = filename_.c_str();
-    const char* sep = strrchr(f, '/');
-    Slice basename;
-    std::string dir;
-    if (sep == NULL) {
-      dir = ".";
-      basename = f;
-    } else {
-      dir = std::string(f, sep - f);
-      basename = sep + 1;
-    }
-    Status s;
-    if (basename.starts_with("MANIFEST")) {
-      int fd = open(dir.c_str(), O_RDONLY);
-      if (fd < 0) {
-        s = IOError(dir, errno);
-      } else {
-        if (fsync(fd) < 0) {
-          s = IOError(dir, errno);
+        if(ret != data.size()) {
+            return(IOError(filename_, errno));
         }
-        close(fd);
-      }
-    }
-    return s;
-  }
 
-  virtual Status Sync() {
-    // Ensure new files referred to by the manifest are in the filesystem.
-    Status s = SyncDirIfManifest();
-    if (!s.ok()) {
-      return s;
+        return(Status::OK());
     }
-    if (fflush_unlocked(file_) != 0 ||
-        fdatasync(fileno(file_)) != 0) {
-      s = Status::IOError(filename_, strerror(errno));
+
+    virtual Status Close() {
+
+        /* Flush the data to the kernel buffer and close the descriptor */
+        if(fclose(file_)) {
+            return(IOError(filename_, errno));
+        }
+
+        file_ = NULL;
+
+        return(Status::OK());
     }
-    return s;
-  }
+
+    virtual Status Flush() {
+
+        /* Flush the data to the kernel buffer without closing the discriptor */
+        if(fflush(file_)) {
+            return(IOError(filename_, errno));
+        }
+
+        return(Status::OK());
+    }
+
+    virtual Status Sync() {
+        Status s;
+
+        /* Manifest must be present */
+        s = SyncDirIfManifest();
+        if(!s.ok()) return(s);
+
+        /* Thread safe flush */
+        s = Flush();
+        if(!s.ok()) return(s);
+
+        /* Sync with the medium */
+        s = SyncFd(fileno(file_), filename_);
+
+        return(s);
+    }
 };
 
 static int LockOrUnlock(int fd, bool lock) {
@@ -296,7 +362,8 @@ class PosixEnv : public Env {
  public:
   PosixEnv();
   virtual ~PosixEnv() {
-    fprintf(stderr, "Destroying Env::Default()\n");
+    char msg[] = "Destroying Env::Default()\n";
+    fwrite(msg, 1, sizeof(msg), stderr);
     abort();
   }
 
@@ -335,7 +402,7 @@ class PosixEnv : public Env {
         mmap_limit_.Release();
       }
     } else {
-      *result = new PosixRandomAccessFile(fname, fd);
+      *result = new PosixRandomAccessFile(fname, fd, &fd_limit_);
     }
     return s;
   }
@@ -344,6 +411,19 @@ class PosixEnv : public Env {
                                  WritableFile** result) {
     Status s;
     FILE* f = fopen(fname.c_str(), "w");
+    if (f == NULL) {
+      *result = NULL;
+      s = IOError(fname, errno);
+    } else {
+      *result = new PosixWritableFile(fname, f);
+    }
+    return s;
+  }
+
+  virtual Status NewAppendableFile(const std::string& fname,
+                                   WritableFile** result) {
+    Status s;
+    FILE* f = fopen(fname.c_str(), "a");
     if (f == NULL) {
       *result = NULL;
       s = IOError(fname, errno);
@@ -469,10 +549,7 @@ class PosixEnv : public Env {
   }
 
   static uint64_t gettid() {
-    pthread_t tid = pthread_self();
-    uint64_t thread_id = 0;
-    memcpy(&thread_id, &tid, std::min(sizeof(thread_id), sizeof(tid)));
-    return thread_id;
+    return((uint64_t)pthread_self());
   }
 
   virtual Status NewLogger(const std::string& fname, Logger** result) {
@@ -522,10 +599,42 @@ class PosixEnv : public Env {
   BGQueue queue_;
 
   PosixLockTable locks_;
-  MmapLimiter mmap_limit_;
+  Limiter mmap_limit_;
+  Limiter fd_limit_;
 };
 
-PosixEnv::PosixEnv() : started_bgthread_(false) {
+// Return the maximum number of concurrent mmaps.
+static int MaxMmaps() {
+  if (mmap_limit >= 0) {
+    return mmap_limit;
+  }
+  // Up to 1000 mmaps for 64-bit binaries; none for smaller pointer sizes.
+  mmap_limit = sizeof(void*) >= 8 ? 1000 : 0;
+  return mmap_limit;
+}
+
+// Return the maximum number of read-only files to keep open.
+static intptr_t MaxOpenFiles() {
+  if (open_read_only_file_limit >= 0) {
+    return open_read_only_file_limit;
+  }
+  struct rlimit rlim;
+  if (getrlimit(RLIMIT_NOFILE, &rlim)) {
+    // getrlimit failed, fallback to hard-coded default.
+    open_read_only_file_limit = 50;
+  } else if (rlim.rlim_cur == RLIM_INFINITY) {
+    open_read_only_file_limit = std::numeric_limits<int>::max();
+  } else {
+    // Allow use of 20% of available file descriptors for read-only files.
+    open_read_only_file_limit = rlim.rlim_cur / 5;
+  }
+  return open_read_only_file_limit;
+}
+
+PosixEnv::PosixEnv()
+    : started_bgthread_(false),
+      mmap_limit_(MaxMmaps()),
+      fd_limit_(MaxOpenFiles()) {
   PthreadCall("mutex_init", pthread_mutex_init(&mu_, NULL));
   PthreadCall("cvar_init", pthread_cond_init(&bgsignal_, NULL));
 }
@@ -600,6 +709,16 @@ static pthread_once_t once = PTHREAD_ONCE_INIT;
 static Env* default_env;
 static void InitDefaultEnv() { default_env = new PosixEnv; }
 
+void EnvPosixTestHelper::SetReadOnlyFDLimit(int limit) {
+  assert(default_env == NULL);
+  open_read_only_file_limit = limit;
+}
+
+void EnvPosixTestHelper::SetReadOnlyMMapLimit(int limit) {
+  assert(default_env == NULL);
+  mmap_limit = limit;
+}
+
 Env* Env::Default() {
   pthread_once(&once, InitDefaultEnv);
   return default_env;
@@ -607,4 +726,4 @@ Env* Env::Default() {
 
 }  // namespace leveldb
 
-#endif
+#endif /* LEVELDB_PLATFORM_POSIX */

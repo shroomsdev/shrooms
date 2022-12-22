@@ -15,10 +15,8 @@ static const int64_t nClientStartupTime = GetTime();
 
 ClientModel::ClientModel(OptionsModel *optionsModel, QObject *parent) :
     QObject(parent), optionsModel(optionsModel),
-    cachedNumBlocks(0), cachedNumBlocksOfPeers(0), pollTimer(0)
+    cachedNumBlocks(0), cachedNumBlocksOfPeers(0), numBlocksAtStartup(-1), pollTimer(0)
 {
-    numBlocksAtStartup = -1;
-
     pollTimer = new QTimer(this);
     pollTimer->setInterval(MODEL_UPDATE_DELAY);
     pollTimer->start();
@@ -68,7 +66,8 @@ void ClientModel::updateTimer()
         cachedNumBlocks = newNumBlocks;
         cachedNumBlocksOfPeers = newNumBlocksOfPeers;
 
-        emit numBlocksChanged(newNumBlocks, newNumBlocksOfPeers);
+        // ensure we return the maximum of newNumBlocksOfPeers and newNumBlocks to not create weird displays in the GUI
+        emit numBlocksChanged(newNumBlocks, std::max(newNumBlocksOfPeers, newNumBlocks));
     }
 }
 
@@ -121,6 +120,11 @@ OptionsModel *ClientModel::getOptionsModel()
     return optionsModel;
 }
 
+QString ClientModel::berkeleyDBVersion() const
+{
+    return QString::fromStdString(BerkeleyDBVersion());
+}
+
 QString ClientModel::formatFullVersion() const
 {
     return QString::fromStdString(FormatFullVersion());
@@ -167,14 +171,14 @@ void ClientModel::subscribeToCoreSignals()
 {
     // Connect signals to client
     uiInterface.NotifyBlocksChanged.connect(boost::bind(NotifyBlocksChanged, this));
-    uiInterface.NotifyNumConnectionsChanged.connect(boost::bind(NotifyNumConnectionsChanged, this, _1));
-    uiInterface.NotifyAlertChanged.connect(boost::bind(NotifyAlertChanged, this, _1, _2));
+    uiInterface.NotifyNumConnectionsChanged.connect(boost::bind(NotifyNumConnectionsChanged, this, boost::placeholders::_1));
+    uiInterface.NotifyAlertChanged.connect(boost::bind(NotifyAlertChanged, this, boost::placeholders::_1, boost::placeholders::_2));
 }
 
 void ClientModel::unsubscribeFromCoreSignals()
 {
     // Disconnect signals from client
     uiInterface.NotifyBlocksChanged.disconnect(boost::bind(NotifyBlocksChanged, this));
-    uiInterface.NotifyNumConnectionsChanged.disconnect(boost::bind(NotifyNumConnectionsChanged, this, _1));
-    uiInterface.NotifyAlertChanged.disconnect(boost::bind(NotifyAlertChanged, this, _1, _2));
+    uiInterface.NotifyNumConnectionsChanged.disconnect(boost::bind(NotifyNumConnectionsChanged, this, boost::placeholders::_1));
+    uiInterface.NotifyAlertChanged.disconnect(boost::bind(NotifyAlertChanged, this, boost::placeholders::_1, boost::placeholders::_2));
 }

@@ -119,12 +119,12 @@ Object blockToJSON(const CBlock& block, const CBlockIndex* blockindex, bool fPri
         result.push_back(Pair("nextblockhash", blockindex->pnext->GetBlockHash().GetHex()));
 
     result.push_back(Pair("flags", strprintf("%s%s", blockindex->IsProofOfStake()? "proof-of-stake" : "proof-of-work", blockindex->GeneratedStakeModifier()? " stake-modifier": "")));
-    result.push_back(Pair("proofhash", blockindex->hashProof.GetHex()));
+    result.push_back(Pair("proofhash", blockindex->hashProofOfStake.GetHex()));
     result.push_back(Pair("entropybit", (int)blockindex->GetStakeEntropyBit()));
-    result.push_back(Pair("modifier", strprintf("%016"PRIx64, blockindex->nStakeModifier)));
+    result.push_back(Pair("modifier", strprintf("%016" PRIx64, blockindex->nStakeModifier)));
     result.push_back(Pair("modifierchecksum", strprintf("%08x", blockindex->nStakeModifierChecksum)));
     Array txinfo;
-    BOOST_FOREACH (const CTransaction& tx, block.vtx)
+    for (const CTransaction& tx : block.vtx)
     {
         if (fPrintTransactionDetail)
         {
@@ -141,8 +141,13 @@ Object blockToJSON(const CBlock& block, const CBlockIndex* blockindex, bool fPri
 
     result.push_back(Pair("tx", txinfo));
 
-    if (block.IsProofOfStake())
-        result.push_back(Pair("signature", HexStr(block.vchBlockSig.begin(), block.vchBlockSig.end())));
+    if ( block.IsProofOfStake() )
+    {
+        CKey key;
+        block.GetGenerator(key);
+        result.push_back(Pair("generator", HexStr(key.GetPubKey().Raw())));
+        result.push_back(Pair("signature", HexStr(block.vchBlockSig)));
+    }
 
     return result;
 }
@@ -207,7 +212,7 @@ Value getrawmempool(const Array& params, bool fHelp)
     mempool.queryHashes(vtxid);
 
     Array a;
-    BOOST_FOREACH(const uint256& hash, vtxid)
+    for (const uint256& hash : vtxid)
         a.push_back(hash.ToString());
 
     return a;

@@ -4,6 +4,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include "util.h"
+#include "db.h"
 #include "sync.h"
 #include "strlcpy.h"
 #include "version.h"
@@ -24,7 +25,6 @@ namespace boost {
 #include <boost/program_options/parsers.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/filesystem/fstream.hpp>
-#include <boost/foreach.hpp>
 #include <boost/thread.hpp>
 #include <openssl/crypto.h>
 #include <openssl/rand.h>
@@ -75,7 +75,6 @@ bool fServer = false;
 bool fCommandLine = false;
 string strMiscWarning;
 bool fTestNet = false;
-bool fNoListen = false;
 bool fLogTimestamps = false;
 CMedianFilter<int64_t> vTimeOffsets(200,0);
 bool fReopenDebugLog = false;
@@ -106,15 +105,17 @@ public:
         CRYPTO_set_locking_callback(locking_callback);
 
 #ifdef WIN32
-        // Seed random number generator with screen scrape and other hardware sources
+        // Seed OpenSSL PRNG with current contents of the screen
         RAND_screen();
 #endif
 
-        // Seed random number generator with performance counter
+        // Seed OpenSSL PRNG with performance counter
         RandAddSeed();
     }
     ~CInit()
     {
+        // Securely erase the memory used by the PRNG
+        RAND_cleanup();
         // Shutdown OpenSSL library multithreading support
         CRYPTO_set_locking_callback(NULL);
         for (int i = 0; i < CRYPTO_num_locks(); i++)
@@ -124,17 +125,8 @@ public:
 }
 instance_of_cinit;
 
-
-
-
-
-
-
-
-void RandAddSeed()
-{
-    // Seed with CPU performance counter
-    int64_t nCounter = GetPerformanceCounter();
+void RandAddSeed() {
+    int64_t nCounter = GetTimeMicros();
     RAND_add(&nCounter, sizeof(nCounter), 1.5);
     memset(&nCounter, 0, sizeof(nCounter));
 }
@@ -294,11 +286,7 @@ string vstrprintf(const char *format, va_list ap)
     {
         va_list arg_ptr;
         va_copy(arg_ptr, ap);
-#ifdef WIN32
-        ret = _vsnprintf(p, limit, format, arg_ptr);
-#else
         ret = vsnprintf(p, limit, format, arg_ptr);
-#endif
         va_end(arg_ptr);
         if (ret >= 0 && ret < limit)
             break;
@@ -371,7 +359,7 @@ string FormatMoney(int64_t n, bool fPlus)
     int64_t n_abs = (n > 0 ? n : -n);
     int64_t quotient = n_abs/COIN;
     int64_t remainder = n_abs%COIN;
-    string str = strprintf("%"PRId64".%08"PRId64, quotient, remainder);
+    string str = strprintf("%" PRId64 ".%08" PRId64, quotient, remainder);
 
     // Right-trim excess zeros before the decimal point:
     int nTrim = 0;
@@ -454,7 +442,7 @@ static const signed char phexdigit[256] =
 
 bool IsHex(const string& str)
 {
-    BOOST_FOREACH(unsigned char c, str)
+    for (unsigned char c : str)
     {
         if (phexdigit[c] < 0)
             return false;
@@ -530,7 +518,7 @@ void ParseParameters(int argc, const char* const argv[])
     }
 
     // New 0.6 features:
-    BOOST_FOREACH(const PAIRTYPE(string,string)& entry, mapArgs)
+    for (const PAIRTYPE(string,string)& entry : mapArgs)
     {
         string name = entry.first;
 
@@ -1135,6 +1123,20 @@ void FileCommit(FILE *fileout)
 #endif
 }
 
+// this function tries to make a particular range of a file allocated (corresponding to disk space)
+// it is advisory, and the range specified in the arguments will never contain live data
+void AllocateFileRange(FILE *file, unsigned int offset, unsigned int length) {
+    static const char buf[65536] = {};
+    fseek(file, offset, SEEK_SET);
+    while (length > 0) {
+        unsigned int now = 65536;
+        if (length < now)
+            now = length;
+        fwrite(buf, 1, now, file); // allowed to fail; this function is advisory anyway
+        length -= now;
+    }
+}
+
 void ShrinkDebugFile()
 {
     // Scroll debug.log if it's getting too big
@@ -1157,6 +1159,32 @@ void ShrinkDebugFile()
     }
 }
 
+/* Pauses a thread's execution for a number of milliseconds */
+void MilliSleep(int64_t nMilliSecs) {
+
+#ifdef WIN32
+    /* Not using the WinAPI Sleep() because of a poor resolution */ 
+
+    HANDLE timer;
+    LARGE_INTEGER ft;
+
+    /* 100ns intervals, negative means relative time */
+    ft.QuadPart = -(10 * 1000 * nMilliSecs);
+
+    timer = CreateWaitableTimer(NULL, TRUE, NULL);
+    SetWaitableTimer(timer, &ft, 0, NULL, NULL, 0);
+    WaitForSingleObject(timer, INFINITE);
+    CloseHandle(timer);
+#else
+    /* usleep() is obsolete by POSIX.1-2001 and out of specification by POSIX.1-2008 */
+
+    timespec time;
+    time.tv_sec = nMilliSecs / 1000;
+    time.tv_nsec = (nMilliSecs % 1000) * 1000000;
+    nanosleep(&time, 0);
+#endif
+}
+
 //
 // "Never go to sea with two chronometers; take one or three."
 // Our three time sources are:
@@ -1164,25 +1192,36 @@ void ShrinkDebugFile()
 //  - Median of other nodes clocks
 //  - The user (asking the user to fix the system clock if the first two disagree)
 //
-static int64_t nMockTime = 0;  // For unit testing
 
+// System clock
 int64_t GetTime()
 {
-    if (nMockTime) return nMockTime;
-
     return time(NULL);
 }
 
-void SetMockTime(int64_t nMockTimeIn)
-{
-    nMockTime = nMockTimeIn;
-}
+// Trusted NTP offset or median of NTP samples.
+extern int64_t nNtpOffset;
 
-static int64_t nTimeOffset = 0;
-
+// Median of time samples given by other nodes.
+static int64_t nNodesOffset = INT64_MAX;
+ 
+// Select time offset:
 int64_t GetTimeOffset()
 {
-    return nTimeOffset;
+    // If NTP and system clock are in agreement within 40 minutes, then use NTP.
+    if (abs64(nNtpOffset) < 40 * 60)
+        return nNtpOffset;
+
+    // If not, then choose between median peer time and system clock.
+    if (abs64(nNodesOffset) < 70 * 60)
+        return nNodesOffset;
+
+    return 0;
+}
+
+int64_t GetNodesOffset()
+{
+        return nNodesOffset;
 }
 
 int64_t GetAdjustedTime()
@@ -1201,7 +1240,7 @@ void AddTimeData(const CNetAddr& ip, int64_t nTime)
 
     // Add data
     vTimeOffsets.input(nOffsetSample);
-    printf("Added time data, samples %d, offset %+"PRId64" (%+"PRId64" minutes)\n", vTimeOffsets.size(), nOffsetSample, nOffsetSample/60);
+    printf("Added time data, samples %d, offset %+" PRId64 " (%+" PRId64 " minutes)\n", vTimeOffsets.size(), nOffsetSample, nOffsetSample/60);
     if (vTimeOffsets.size() >= 5 && vTimeOffsets.size() % 2 == 1)
     {
         int64_t nMedian = vTimeOffsets.median();
@@ -1209,18 +1248,19 @@ void AddTimeData(const CNetAddr& ip, int64_t nTime)
         // Only let other nodes change our time by so much
         if (abs64(nMedian) < 70 * 60)
         {
-            nTimeOffset = nMedian;
+            nNodesOffset = nMedian;
         }
         else
         {
-            nTimeOffset = 0;
+            nNodesOffset = INT64_MAX;
 
             static bool fDone;
             if (!fDone)
             {
-                // If nobody has a time different than ours but within 5 minutes of ours, give a warning
                 bool fMatch = false;
-                BOOST_FOREACH(int64_t nOffset, vSorted)
+
+                 // If nobody has a time different than ours but within 5 minutes of ours, give a warning
+                for (int64_t nOffset : vSorted)
                     if (nOffset != 0 && abs64(nOffset) < 5 * 60)
                         fMatch = true;
 
@@ -1235,20 +1275,19 @@ void AddTimeData(const CNetAddr& ip, int64_t nTime)
             }
         }
         if (fDebug) {
-            BOOST_FOREACH(int64_t n, vSorted)
-                printf("%+"PRId64"  ", n);
+            for (int64_t n : vSorted)
+                printf("%+" PRId64 "  ", n);
             printf("|  ");
         }
-        printf("nTimeOffset = %+"PRId64"  (%+"PRId64" minutes)\n", nTimeOffset, nTimeOffset/60);
+        if (nNodesOffset != INT64_MAX)
+            printf("nNodesOffset = %+" PRId64 "  (%+" PRId64 " minutes)\n", nNodesOffset, nNodesOffset/60);
     }
 }
 
-
-
-
-
-
-
+string BerkeleyDBVersion()
+{
+        return strprintf("%s", DbEnv::version(0, 0, 0));
+}
 
 string FormatVersion(int nVersion)
 {
@@ -1260,7 +1299,7 @@ string FormatVersion(int nVersion)
 
 string FormatFullVersion()
 {
-    return CLIENT_BUILD;
+    return CLIENT_BUILD + " " + Species();
 }
 
 // Format the subversion field according to BIP 14 spec (https://en.bitcoin.it/wiki/BIP_0014)
