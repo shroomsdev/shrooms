@@ -6,7 +6,6 @@
 #define BITCOIN_NET_H
 
 #include <deque>
-#include <boost/array.hpp>
 #include <openssl/rand.h>
 
 #ifndef WIN32
@@ -118,7 +117,7 @@ extern bool fUseUPnP;
 extern uint64_t nLocalServices;
 extern uint64_t nLocalHostNonce;
 extern CAddress addrSeenByPeer;
-extern boost::array<int, THREAD_MAX> vnThreadsRunning;
+extern std::array<int, THREAD_MAX> vnThreadsRunning;
 extern CAddrMan addrman;
 
 extern std::vector<CNode*> vNodes;
