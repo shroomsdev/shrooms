@@ -698,6 +698,11 @@ bool AppInit2()
         return InitError(msg);
     }
 
+    // create database directories if not exist
+    filesystem::path blocksDir = GetDataDir() / "blocks";
+    if (!filesystem::exists(blocksDir))
+        filesystem::create_directories(blocksDir);
+
     uiInterface.InitMessage(_("Loading block index..."));
     printf("Loading block index...\n");
     nStart = GetTimeMillis();
