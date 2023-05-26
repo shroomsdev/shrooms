@@ -96,7 +96,6 @@ extern unsigned int nNodeLifespan;
 extern int nCoinbaseMaturity;
 extern int nBestHeight;
 extern uint256 nBestChainTrust;
-extern uint256 nBestInvalidTrust;
 extern uint256 hashBestChain;
 extern CBlockIndex* pindexBest;
 extern unsigned int nTransactionsUpdated;
@@ -1205,7 +1204,7 @@ public:
     uint256 GetPoWHash() const
     {
         //return scrypt_blockhash(CVOIDBEGIN(nVersion));
-	return Hash(BEGIN(nVersion), END(nNonce));
+    return Hash(BEGIN(nVersion), END(nNonce));
         //uint256 thash;
        // scrypt_1024_1_1_256(CVOIDBEGIN(nVersion), (char*)thash);
        // return thash;

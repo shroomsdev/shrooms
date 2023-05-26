@@ -55,7 +55,7 @@ CBlockIndex* pindexGenesisBlock = NULL;
 int nBestHeight = -1;
 
 uint256 nBestChainTrust = 0;
-uint256 nBestInvalidTrust = 0;
+CBlockIndex *pindexBestInvalid;
 
 uint256 hashBestChain = 0;
 CBlockIndex* pindexBest = NULL;
@@ -1241,10 +1241,9 @@ bool IsInitialBlockDownload()
 
 void static InvalidChainFound(CBlockIndex* pindexNew)
 {
-    if (pindexNew->nChainTrust > nBestInvalidTrust)
+    if (!pindexBestInvalid || pindexNew->nChainTrust > pindexBestInvalid->nChainTrust)
     {
-        nBestInvalidTrust = pindexNew->nChainTrust;
-        pblocktree->WriteBestInvalidTrust(CBigNum(nBestInvalidTrust));
+        pindexBestInvalid = pindexNew;
         uiInterface.NotifyBlocksChanged();
     }
 
@@ -2691,6 +2690,8 @@ bool static LoadBlockIndexDB()
         pindex->nChainTx = (pindex->pprev ? pindex->pprev->nChainTx : 0) + pindex->nTx;
         if ((pindex->nStatus & BLOCK_VALID_MASK) >= BLOCK_VALID_TRANSACTIONS && !(pindex->nStatus & BLOCK_FAILED_MASK))
             setBlockIndexValid.insert(pindex);
+        if (pindex->nStatus & BLOCK_FAILED_MASK && (!pindexBestInvalid || pindex->nChainTrust > pindexBestInvalid->nChainTrust))
+            pindexBestInvalid = pindex;
 
         // Calculate stake modifier checksum
         pindex->nStakeModifierChecksum = GetStakeModifierChecksum(pindex);
@@ -2731,11 +2732,6 @@ bool static LoadBlockIndexDB()
     if (!pblocktree->ReadSyncCheckpoint(Checkpoints::hashSyncCheckpoint))
         return error("LoadBlockIndexDB() : hashSyncCheckpoint not loaded");
     printf("LoadBlockIndexDB(): synchronized checkpoint %s\n", Checkpoints::hashSyncCheckpoint.ToString().c_str());
-
-    // Load bnBestInvalidTrust, OK if it doesn't exist
-    CBigNum bnBestInvalidTrust;
-    pblocktree->ReadBestInvalidTrust(bnBestInvalidTrust);
-    nBestInvalidTrust = bnBestInvalidTrust.getuint256();
 
     // Verify blocks in the best chain
     int nCheckLevel = GetArg("-checklevel", 1);
