@@ -1659,6 +1659,9 @@ bool CBlock::ConnectBlock(CBlockIndex* pindex, CCoinsViewCache &view, bool fJust
     // BIP16 always active
     bool fStrictPayToScriptHash = true;
 
+    unsigned int flags = SCRIPT_VERIFY_NOCACHE |
+                         (fStrictPayToScriptHash ? SCRIPT_VERIFY_P2SH : SCRIPT_VERIFY_NONE);
+
     CBlockUndo blockundo;
 
     int64_t nFees = 0;
@@ -1692,7 +1695,7 @@ bool CBlock::ConnectBlock(CBlockIndex* pindex, CCoinsViewCache &view, bool fJust
             if (!tx.IsCoinStake())
                 nFees += nTxValueIn - nTxValueOut;
             
-            if (!tx.CheckInputs(view, CS_AFTER_CHECKPOINT, fStrictPayToScriptHash ? SCRIPT_VERIFY_P2SH : SCRIPT_VERIFY_NONE, this))
+            if (!tx.CheckInputs(view, CS_AFTER_CHECKPOINT, flags, this))
                 return false;
         }
         else
