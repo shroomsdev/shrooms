@@ -1,6 +1,6 @@
 TEMPLATE = app
 TARGET = SHROOMS-qt
-VERSION = 1.8
+VERSION = 1.8.2
 INCLUDEPATH += src src/json src/qt
 QT += network printsupport
 DEFINES += QT_GUI BOOST_THREAD_USE_LIB BOOST_SPIRIT_THREADSAFE __STDC_FORMAT_MACROS __STDC_LIMIT_MACROS
@@ -159,6 +159,7 @@ HEADERS += src/qt/bitcoingui.h \
     src/compat.h \
     src/coincontrol.h \
     src/sync.h \
+    src/random.h \
     src/util.h \
     src/hash.h \
     src/uint256.h \
@@ -241,6 +242,7 @@ SOURCES += src/qt/bitcoin.cpp src/qt/bitcoingui.cpp \
     src/cleanse.cpp \
     src/version.cpp \
     src/sync.cpp \
+    src/random.cpp \
     src/util.cpp \
     src/hash.cpp \
     src/netbase.cpp \
