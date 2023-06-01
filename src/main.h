@@ -1435,14 +1435,8 @@ public:
     // Generate proof-of-stake block signature
     bool SignBlock(CWallet& keystore, int64_t nFees);
 
-    // Get generator key
-    bool GetGenerator(CKey& GeneratorKey) const;
-
-    // Validate proof-of-stake block signature
-    bool CheckSignature(bool& fFatal, uint256& hashProofOfStake) const;
-
-    // Legacy proof-of-work signature
-    bool CheckLegacySignature() const;
+    // Validate header signature
+    bool CheckBlockSignature() const;
 };
 
 class CBlockFileInfo

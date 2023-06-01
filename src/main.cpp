@@ -2191,6 +2191,10 @@ bool CBlock::CheckBlock(bool fCheckPOW, bool fCheckMerkleRoot, bool fCheckSig) c
         // Check coinstake timestamp
         if (!CheckCoinStakeTimestamp(GetBlockTime(), (int64_t)vtx[1].nTime))
             return DoS(50, error("CheckBlock() : coinstake timestamp violation nTimeBlock=%" PRId64 " nTimeTx=%u", GetBlockTime(), vtx[1].nTime));
+
+        // NovaCoin: check proof-of-stake block signature
+        if (fCheckSig && !CheckBlockSignature())
+            return DoS(100, error("CheckBlock() : bad proof-of-stake block signature"));
     }
 
 
@@ -2345,41 +2349,24 @@ bool ProcessBlock(CNode* pfrom, CBlock* pblock)
     if (mapOrphanBlocks.count(hash))
         return error("ProcessBlock() : already have block (orphan) %s", hash.ToString().substr(0,20).c_str());
 
+    // ppcoin: check proof-of-stake
+    // Limited duplicity on stake: prevents block flood attack
+    // Duplicate stake allowed only when there is orphan child block
+    if (pblock->IsProofOfStake() && setStakeSeen.count(pblock->GetProofOfStake()) && !mapOrphanBlocksByPrev.count(hash) && !Checkpoints::WantedByPendingSyncCheckpoint(hash))
+        return error("ProcessBlock() : duplicate proof-of-stake (%s, %d) for block %s", pblock->GetProofOfStake().first.ToString().c_str(), pblock->GetProofOfStake().second, hash.ToString().c_str());
+
     // Preliminary checks
     if (!pblock->CheckBlock())
         return error("ProcessBlock() : CheckBlock FAILED");
 
+    // ppcoin: verify hash target and signature of coinstake tx
     if (pblock->IsProofOfStake())
     {
-        // Limited duplicity on stake: prevents block flood attack
-        // Duplicate stake allowed only when there is orphan child block
-        if (setStakeSeen.count(pblock->GetProofOfStake()) && !mapOrphanBlocksByPrev.count(hash) && !Checkpoints::WantedByPendingSyncCheckpoint(hash))
-            return error("ProcessBlock() : duplicate proof-of-stake (%s, %d) for block %s", pblock->GetProofOfStake().first.ToString().c_str(), pblock->GetProofOfStake().second, hash.ToString().c_str());
-
-        bool fFatal = false;
-        uint256 hashProofOfStake;
-
-        // Verify proof-of-stake script, hash target and signature
-        if (!pblock->CheckSignature(fFatal, hashProofOfStake))
+        uint256 hashProofOfStake = 0, targetProofOfStake = 0;
+        if (!CheckProofOfStake(pblock->vtx[1], pblock->nBits, hashProofOfStake, targetProofOfStake))
         {
-            if (fFatal)
-            {
-                // Invalid coinstake script, blockhash signature or no generator defined, nothing to do here
-                // This also may occur when supplied proof-of-stake doesn't satisfy required target
-                if (pfrom)
-                    pfrom->Misbehaving(100);
-                return error("ProcessBlock() : invalid signatures found in proof-of-stake block %s", hash.ToString().c_str());
-            }
-            else
-            {
-                // Blockhash and coinstake signatures are OK but target checkings failed
-                // This may occur during initial block download
-                if (pfrom && !IsInitialBlockDownload())
-                  pfrom->Misbehaving(1); // Small DoS penalty
-
-                printf("WARNING: ProcessBlock(): proof-of-stake target checkings failed for block %s, we'll try again later\n", hash.ToString().c_str());
-                return false;
-            }
+            printf("WARNING: ProcessBlock(): check proof-of-stake failed for block %s\n", hash.ToString().c_str());
+            return false; // do not error here as we expect this during initial block download
         }
 
         if (!mapProofOfStake.count(hash)) // add to mapProofOfStake
@@ -2418,6 +2405,7 @@ bool ProcessBlock(CNode* pfrom, CBlock* pblock)
         printf("ProcessBlock: ORPHAN BLOCK, prev=%s\n", pblock->hashPrevBlock.ToString().substr(0,20).c_str());
         CBlock* pblock2 = new CBlock(*pblock);
 
+        // ppcoin: check proof-of-stake
         if (pblock2->IsProofOfStake())
         {
             // Limited duplicity on stake: prevents block flood attack
@@ -2526,76 +2514,24 @@ bool CBlock::SignBlock(CWallet& wallet, int64_t nFees)
     return false;
 }
 
-// get generation key
-bool CBlock::GetGenerator(CKey& GeneratorKey) const
+// ppcoin: check block signature
+bool CBlock::CheckBlockSignature() const
 {
-    if(!IsProofOfStake())
+    if (vchBlockSig.empty())
         return false;
 
-    vector<valtype> vSolutions;
     txnouttype whichType;
-
-    const CTxOut& txout = vtx[1].vout[1];
-
-    if (!Solver(txout.scriptPubKey, whichType, vSolutions))
+    vector<valtype> vSolutions;
+    if (!Solver(vtx[1].vout[1].scriptPubKey, whichType, vSolutions))
         return false;
+
     if (whichType == TX_PUBKEY)
     {
         valtype& vchPubKey = vSolutions[0];
-        CKey key;
-        return GeneratorKey.SetPubKey(vchPubKey);
-    }
-
-    return false;
-}
-
-// verify proof-of-stake signatures
-bool CBlock::CheckSignature(bool& fFatal, uint256& hashProofOfStake) const
-{
-    CKey key;
-
-    // no generator or invalid hash signature means fatal error
-    fFatal = !GetGenerator(key) || !key.Verify(GetHash(), vchBlockSig);
-
-    if (fFatal)
-        return false;
-
-    uint256 hashTarget = 0;
-    if (!CheckProofOfStake(vtx[1], nBits, hashProofOfStake, hashTarget, fFatal))
-        return false; // hash target mismatch or invalid coinstake signature
-
-    return true;
-}
-
-// verify legacy proof-of-work signature
-bool CBlock::CheckLegacySignature() const
-{
-    if (IsProofOfStake())
-        return false;
-
-    vector<valtype> vSolutions;
-    txnouttype whichType;
-
-    for(unsigned int i = 0; i < vtx[0].vout.size(); i++)
-    {
-        const CTxOut& txout = vtx[0].vout[i];
-
-        if (!Solver(txout.scriptPubKey, whichType, vSolutions))
+        CPubKey key(vchPubKey);
+        if (!key.IsValid())
             return false;
-
-        if (whichType == TX_PUBKEY)
-        {
-            // Verify
-            valtype& vchPubKey = vSolutions[0];
-            CKey key;
-            if (!key.SetPubKey(vchPubKey))
-                continue;
-            if (vchBlockSig.empty())
-                continue;
-            if(!key.Verify(GetHash(), vchBlockSig))
-                continue;
-            return true;
-        }
+        return key.Verify(GetHash(), vchBlockSig);
     }
 
     return false;

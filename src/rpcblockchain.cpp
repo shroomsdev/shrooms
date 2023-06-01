@@ -142,12 +142,7 @@ Object blockToJSON(const CBlock& block, const CBlockIndex* blockindex, bool fPri
     result.push_back(Pair("tx", txinfo));
 
     if ( block.IsProofOfStake() )
-    {
-        CKey key;
-        block.GetGenerator(key);
-        result.push_back(Pair("generator", HexStr(key.GetPubKey().Raw())));
         result.push_back(Pair("signature", HexStr(block.vchBlockSig)));
-    }
 
     return result;
 }
