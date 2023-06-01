@@ -14,7 +14,7 @@
 #include <boost/variant.hpp>
 
 #include "keystore.h"
-#include "bignum.h"
+#include "util.h"
 
 class CCoins;
 class CTransaction;
@@ -185,10 +185,24 @@ enum
 enum
 {
     SCRIPT_VERIFY_NONE      = 0,
-    SCRIPT_VERIFY_P2SH      = (1U << 0), // evaluate P2SH (BIP16) subscripts
-    SCRIPT_VERIFY_STRICTENC = (1U << 1), // enforce strict conformance to DER and SEC2 for signatures and pubkeys
-    SCRIPT_VERIFY_LOW_S     = (1U << 2), // enforce low S values (<n/2) in signatures (depends on STRICTENC)
-    SCRIPT_VERIFY_NOCACHE   = (1U << 3), // do not store results in signature cache (but do query it)
+
+    // Evaluate P2SH subscripts (softfork safe, BIP16).
+    SCRIPT_VERIFY_P2SH      = (1U << 0),
+
+    // Passing a non-strict-DER signature or one with undefined hashtype to a checksig operation causes script failure.
+    // Passing a pubkey that is not (0x04 + 64 bytes) or (0x02 or 0x03 + 32 bytes) to checksig causes that pubkey to be
+    // skipped (not softfork safe: this flag can widen the validity of OP_CHECKSIG OP_NOT).
+    SCRIPT_VERIFY_STRICTENC = (1U << 1),
+
+   // Passing a non-strict-DER signature to a checksig operation causes script failure (softfork safe, BIP62 rule 1)
+    SCRIPT_VERIFY_DERSIG    = (1U << 2),
+
+    // Passing a non-strict-DER signature or one with S > order/2 to a checksig operation causes script failure
+    // (softfork safe, BIP62 rule 5).
+    SCRIPT_VERIFY_LOW_S     = (1U << 3),
+
+    // do not store results in signature cache (but do query it)
+    SCRIPT_VERIFY_NOCACHE   = (1U << 4),
 };
 
 enum txnouttype
@@ -366,8 +380,6 @@ enum opcodetype
 
 const char* GetOpName(opcodetype opcode);
 
-
-
 inline std::string ValueString(const std::vector<unsigned char>& vch)
 {
     if (vch.size() <= 4)
@@ -439,7 +451,6 @@ public:
     explicit CScript(opcodetype b)     { operator<<(b); }
     explicit CScript(const uint256& b) { operator<<(b); }
     explicit CScript(const CScriptNum& b) { operator<<(b); }
-    explicit CScript(const CBigNum& b) { operator<<(b); }
     explicit CScript(const std::vector<unsigned char>& b) { operator<<(b); }
 
 
@@ -476,18 +487,11 @@ public:
         return *this;
     }
 
-    CScript& operator<<(const CBigNum& b)
-    {
-        *this << b.getvch();
-        return *this;
-    }
-
     CScript& operator<<(const CScriptNum& b)
     {
         *this << b.getvch();
         return *this;
     }
-
     CScript& operator<<(const std::vector<unsigned char>& b)
     {
         if (b.size() < OP_PUSHDATA1)
@@ -791,9 +795,6 @@ public:
         s >> REF(CFlatData(&script[0], &script[script.size()]));
     }
 };
-
-bool IsCanonicalPubKey(const std::vector<unsigned char> &vchPubKey, unsigned int flags);
-bool IsCanonicalSignature(const std::vector<unsigned char> &vchSig, unsigned int flags);
 
 bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& script, const CTransaction& txTo, unsigned int nIn, unsigned int flags, int nHashType);
 bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, std::vector<std::vector<unsigned char> >& vSolutionsRet);
