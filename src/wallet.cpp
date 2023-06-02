@@ -393,7 +393,7 @@ void CWallet::MarkDirty()
 {
     {
         LOCK(cs_wallet);
-        for (PAIRTYPE(const uint256, CWalletTx)& item : mapWallet)
+        for (auto& item : mapWallet)
             item.second.MarkDirty();
     }
 }
@@ -729,13 +729,13 @@ void CWalletTx::GetAccountAmounts(const string& strAccount, int64_t& nReceived,
 
     if (strAccount == strSentAccount)
     {
-        for (const PAIRTYPE(CTxDestination,int64_t)& s : listSent)
+        for (const auto& s : listSent)
             nSent += s.second;
         nFee = allFee;
     }
     {
         LOCK(pwallet->cs_wallet);
-        for (const PAIRTYPE(CTxDestination,int64_t)& r : listReceived)
+        for (const auto& r : listReceived)
         {
             if (pwallet->mapAddressBook.count(r.first))
             {
@@ -846,7 +846,7 @@ void CWallet::ReacceptWalletTransactions()
         LOCK(cs_wallet);
         fRepeat = false;
         bool fMissing = false;
-        for (PAIRTYPE(const uint256, CWalletTx)& item : mapWallet)
+        for (auto& item : mapWallet)
         {
             CWalletTx& wtx = item.second;
             if ((wtx.IsCoinBase() && wtx.IsSpent(0)) || (wtx.IsCoinStake() && wtx.IsSpent(1)))
@@ -942,7 +942,7 @@ void CWallet::ResendWalletTransactions(bool fForce)
         LOCK(cs_wallet);
         // Sort them in chronological order
         multimap<unsigned int, CWalletTx*> mapSorted;
-        for (PAIRTYPE(const uint256, CWalletTx)& item : mapWallet)
+        for (auto& item : mapWallet)
         {
             CWalletTx& wtx = item.second;
             // Don't rebroadcast until it's had plenty of time that
@@ -950,7 +950,7 @@ void CWallet::ResendWalletTransactions(bool fForce)
             if (fForce || nTimeBestReceived - (int64_t)wtx.nTimeReceived > 5 * 60)
                 mapSorted.insert(make_pair(wtx.nTimeReceived, &wtx));
         }
-        for (PAIRTYPE(const unsigned int, CWalletTx*)& item : mapSorted)
+        for (const auto& item : mapSorted)
         {
             CWalletTx& wtx = *item.second;
             wtx.RelayWalletTransaction();
@@ -1313,7 +1313,7 @@ bool CWallet::SelectCoinsSimple(int64_t nTargetValue, unsigned int nSpendTime, i
 bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, CWalletTx& wtxNew, CReserveKey& reservekey, int64_t& nFeeRet, int nSplitBlock, const CCoinControl* coinControl)
 {
     int64_t nValue = 0;
-    for (const PAIRTYPE(CScript, int64_t)& s : vecSend)
+    for (const auto& s : vecSend)
     {
         if (nValue < 0)
             return false;
@@ -1341,32 +1341,32 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, 
 				if( nSplitBlock < 1 )  
 					nSplitBlock = 1;
                 // vouts to the payees
-				if (!fSplitBlock) 
-				{ 
-				for (const PAIRTYPE(CScript, int64_t)& s : vecSend) 
-					wtxNew.vout.push_back(CTxOut(s.second, s.first)); 
-				} 
-				else
-                for (const PAIRTYPE(CScript, int64_t)& s : vecSend)
-				{ 
+                if (!fSplitBlock) 
+                { 
+                for (const auto& s : vecSend)
+                    wtxNew.vout.push_back(CTxOut(s.second, s.first)); 
+                } 
+                else
+                for (const auto& s : vecSend)
+                { 
                     for(int nCount = 0; nCount < nSplitBlock; nCount++) 
-					{ 
-						if(nCount == nSplitBlock -1) 
-						{ 
-							uint64_t nRemainder = s.second % nSplitBlock; 
-							wtxNew.vout.push_back(CTxOut((s.second / nSplitBlock) + nRemainder, s.first)); 
-						} 
-						else 
-							wtxNew.vout.push_back(CTxOut(s.second / nSplitBlock, s.first));
-					}
-				}
+                    { 
+                        if(nCount == nSplitBlock -1) 
+                        { 
+                            uint64_t nRemainder = s.second % nSplitBlock; 
+                            wtxNew.vout.push_back(CTxOut((s.second / nSplitBlock) + nRemainder, s.first)); 
+                        } 
+                        else 
+                            wtxNew.vout.push_back(CTxOut(s.second / nSplitBlock, s.first));
+                    }
+                }
 
                 // Choose coins to use
                 set<pair<const CWalletTx*,unsigned int> > setCoins;
                 int64_t nValueIn = 0;
                 if (!SelectCoins(nTotalValue, wtxNew.nTime, setCoins, nValueIn, coinControl))
                     return false;
-                for (PAIRTYPE(const CWalletTx*, unsigned int) pcoin : setCoins)
+                for (auto pcoin : setCoins)
                 {
                     int64_t nCredit = pcoin.first->vout[pcoin.second].nValue;
                     dPriority += (double)nCredit * pcoin.first->GetDepthInMainChain();
@@ -1419,12 +1419,12 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, 
                     reservekey.ReturnKey();
 
                 // Fill vin
-                for (const PAIRTYPE(const CWalletTx*,unsigned int)& coin : setCoins)
+                for (const auto& coin : setCoins)
                     wtxNew.vin.push_back(CTxIn(coin.first->GetHash(),coin.second));
 
                 // Sign
                 int nIn = 0;
-                for (const PAIRTYPE(const CWalletTx*,unsigned int)& coin : setCoins)
+                for (const auto& coin : setCoins)
                     if (!SignSignature(*this, *coin.first, wtxNew, nIn++))
                         return false;
 
@@ -1502,7 +1502,7 @@ bool CWallet::GetStakeWeight(const CKeyStore& keystore, uint64_t& nMinWeight, ui
     nMinWeight = nMaxWeight = nWeight = 0;
 
     CCoinsViewCache &view = *pcoinsTip;
-    for (PAIRTYPE(const CWalletTx*, unsigned int) pcoin : setCoins)
+    for (auto pcoin : setCoins)
     {
         CCoins coins;
         {
@@ -1572,7 +1572,7 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
     CScript scriptPubKeyKernel;
 
     CCoinsViewCache &view = *pcoinsTip;
-    for (PAIRTYPE(const CWalletTx*, unsigned int) pcoin : setCoins)
+    for (auto pcoin : setCoins)
     {
         CCoins coins;
         {
@@ -1689,7 +1689,7 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
 
     if(fCombineDust) //presstab HyperStake - this combination code iterates through all of your outputs on successful coinstake, so its useful to have user be able to choose whether this is necessary
 	{
-	    for (PAIRTYPE(const CWalletTx*, unsigned int) pcoin : setCoins)
+	    for (auto pcoin : setCoins)
 	    {
 	        // Attempt to add more inputs
 	        // Only add coins of the same key/address as kernel
@@ -2135,7 +2135,7 @@ std::map<CTxDestination, int64_t> CWallet::GetAddressBalances()
 
     {
         LOCK(cs_wallet);
-        for (PAIRTYPE(uint256, CWalletTx) walletEntry : mapWallet)
+        for (auto walletEntry : mapWallet)
         {
             CWalletTx *pcoin = &walletEntry.second;
 
@@ -2174,7 +2174,7 @@ set< set<CTxDestination> > CWallet::GetAddressGroupings()
     set< set<CTxDestination> > groupings;
     set<CTxDestination> grouping;
 
-    for (PAIRTYPE(uint256, CWalletTx) walletEntry : mapWallet)
+    for (auto walletEntry : mapWallet)
     {
         CWalletTx *pcoin = &walletEntry.second;
 
