@@ -85,6 +85,8 @@ OBJS= \
     obj/wallet.o \
     obj/walletdb.o \
     obj/hash.o \
+    obj/crypto/aes.o \
+    obj/crypto/sha512.o \
     obj/crypto/sha1.o \
     obj/crypto/sha256.o \
     obj/crypto/hmac_sha256.o \
@@ -139,6 +141,7 @@ obj/scrypt-x86_64.o: scrypt-x86_64.S
 
 clean:
 	-rm -f obj/*.o
+	-rm -f obj/crypto/*.o
 	-rm -f SHROOMSd.exe
 	-rm -f obj/build.h
 	cd leveldb && TARGET_OS=OS_WINDOWS_CROSSCOMPILE $(MAKE) clean && cd ..

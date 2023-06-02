@@ -193,8 +193,10 @@ HEADERS += src/qt/bitcoingui.h \
     src/pbkdf2.h \
     src/serialize.h \
     src/crypto/common.h \
+    src/crypto/aes.h \
     src/crypto/sha1.h \
     src/crypto/sha256.h \
+    src/crypto/sha512.h \
     src/crypto/hmac_sha256.h \
     src/crypto/ripemd160.h \
     src/strlcpy.h \
@@ -278,8 +280,10 @@ SOURCES += src/qt/bitcoin.cpp src/qt/bitcoingui.cpp \
     src/pubkey.cpp \
     src/base58.cpp \
     src/script.cpp \
+    src/crypto/aes.cpp \
     src/crypto/sha1.cpp \
     src/crypto/sha256.cpp \
+    src/crypto/sha512.cpp \
     src/crypto/hmac_sha256.cpp \
     src/crypto/ripemd160.cpp \
     src/main.cpp \
