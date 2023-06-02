@@ -1328,8 +1328,8 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, 
         LOCK2(cs_main, cs_wallet);
         {
             nFeeRet = nTransactionFee;
-			if(fSplitBlock) 
-				nFeeRet = 0.1 * COIN;
+            if(fSplitBlock) 
+                nFeeRet = 0.1 * COIN;
             while (true)
             {
                 wtxNew.vin.clear();
@@ -1338,8 +1338,8 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, 
 
                 int64_t nTotalValue = nValue + nFeeRet;
                 double dPriority = 0;
-				if( nSplitBlock < 1 )  
-					nSplitBlock = 1;
+                if( nSplitBlock < 1 )  
+                    nSplitBlock = 1;
                 // vouts to the payees
                 if (!fSplitBlock) 
                 { 
@@ -1655,11 +1655,11 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
                         break;  // unable to find corresponding public key
                     }
 
-                if (key.GetPubKey() != vchPubKey)
-                {
-                    if (fDebug && GetBoolArg("-printcoinstake"))
-                        printf("CreateCoinStake : invalid key for kernel type=%d\n", whichType);
-                        break; // keys mismatch
+                    if (key.GetPubKey() != vchPubKey)
+                    {
+                        if (fDebug && GetBoolArg("-printcoinstake"))
+                            printf("CreateCoinStake : invalid key for kernel type=%d\n", whichType);
+                                break; // keys mismatch
                     }
 
                     scriptPubKeyOut = scriptPubKeyKernel;

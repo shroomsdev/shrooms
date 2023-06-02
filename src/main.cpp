@@ -730,7 +730,7 @@ bool CTxMemPool::accept(CTransaction &tx, bool fCheckInputs, bool* pfMissingInpu
             return false;
 
         // do all inputs exist?
-        for (const CTxIn txin : tx.vin) {
+        for (const CTxIn& txin : tx.vin) {
             if (!view.HaveCoins(txin.prevout.hash)) {
                 if (pfMissingInputs)
                     *pfMissingInputs = true;
